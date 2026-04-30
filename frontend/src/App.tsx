@@ -1,5 +1,10 @@
+// Added: @radix-ui/react-select for styled dropdowns, react-hook-form + zod for form validation.
 import Editor from "@monaco-editor/react";
-import { ComponentProps, FormEvent, ReactNode, useEffect, useRef, useState } from "react";
+import * as Select from "@radix-ui/react-select";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { ComponentProps, createContext, ReactNode, useContext, useEffect, useRef, useState } from "react";
+import { useForm } from "react-hook-form";
+import { z } from "zod";
 import {
   Bold,
   Check,
@@ -17,68 +22,107 @@ import {
   List,
   ListOrdered,
   Lock,
+  MoreVertical,
+  Moon,
+  Pencil,
   Plus,
   Settings,
+  Sun,
   Tag,
+  Trash2,
   Underline,
   X,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
-import { BrowserRouter, Link, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
+import { BrowserRouter, Link, Route, Routes, useNavigate, useParams } from "react-router-dom";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import remarkGfm from "remark-gfm";
-import { createProblem, createSubmission, getProblem, listProblems } from "./api";
+import { createSubmission, getProblem, listProblems } from "./api";
 import type {
   ProblemDetail,
   ProblemDifficulty,
   ProblemExample,
-  ProblemRequest,
   ProblemSummary,
   ProblemType,
   Submission,
 } from "./types";
 
-const defaultProblemForm = (): ProblemRequest => ({
-  title: "",
-  slug: "",
-  summary: "",
-  descriptionMarkdown: "",
-  constraintsMarkdown: "",
-  type: "JAVA",
-  difficulty: "EASY",
-  starterCode: "",
-  referenceSolution: "",
-  evaluationNotes: "",
-  examples: [
-    {
-      label: "Example 1",
-      sortOrder: 0,
-      inputData: "",
-      expectedOutput: "",
-      explanation: "",
-    },
-  ],
-});
-
 type DocumentTab = "description" | "solution" | "notes";
-type AuthorSection = "setup" | "prompt" | "judge" | "examples";
 type CodeLanguage = "java" | "sql" | "json" | "plaintext";
 type ResultPanelMode = "testcase" | "result";
 
 type MonacoBeforeMount = NonNullable<ComponentProps<typeof Editor>["beforeMount"]>;
 type Monaco = Parameters<MonacoBeforeMount>[0];
+type ThemeMode = "light" | "dark";
+type MarkdownNode = {
+  type?: string;
+  value?: string;
+  children?: MarkdownNode[];
+  data?: Record<string, unknown>;
+};
+
+const ThemeContext = createContext<{ theme: ThemeMode; toggleTheme: () => void }>({
+  theme: "light",
+  toggleTheme: () => undefined,
+});
+
+function getInitialTheme(): ThemeMode {
+  if (typeof window === "undefined") {
+    return "light";
+  }
+
+  const savedTheme = window.localStorage.getItem("juro-theme");
+  if (savedTheme === "light" || savedTheme === "dark") {
+    return savedTheme;
+  }
+
+  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+
+function useAppTheme() {
+  return useContext(ThemeContext);
+}
+
+function ThemeToggleButton() {
+  const { theme, toggleTheme } = useAppTheme();
+  const Icon = theme === "dark" ? Sun : Moon;
+
+  return (
+    <button
+      aria-label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
+      className="icon-button"
+      onClick={toggleTheme}
+      type="button"
+    >
+      <Icon size={17} strokeWidth={2.25} />
+    </button>
+  );
+}
 
 function App() {
+  const [theme, setTheme] = useState<ThemeMode>(getInitialTheme);
+
+  useEffect(() => {
+    document.documentElement.classList.toggle("dark", theme === "dark");
+    document.documentElement.dataset.theme = theme;
+    window.localStorage.setItem("juro-theme", theme);
+  }, [theme]);
+
+  function toggleTheme() {
+    setTheme((current) => (current === "dark" ? "light" : "dark"));
+  }
+
   return (
-    <BrowserRouter>
-      <div className="app-shell">
-        <Routes>
-          <Route path="/" element={<ProblemListPage />} />
-          <Route path="/problems/new" element={<CreateProblemPage />} />
-          <Route path="/problems/:problemId" element={<ProblemDetailPage />} />
-        </Routes>
-      </div>
-    </BrowserRouter>
+    <ThemeContext.Provider value={{ theme, toggleTheme }}>
+      <BrowserRouter>
+        <div className="app-shell">
+          <Routes>
+            <Route path="/" element={<ProblemListPage />} />
+            <Route path="/problems/:problemId" element={<ProblemDetailPage />} />
+          </Routes>
+        </div>
+      </BrowserRouter>
+    </ThemeContext.Provider>
   );
 }
 
@@ -133,27 +177,9 @@ function ScreenHeader({ kicker, title, description, compact = false, children }:
           <h1 className="screen-header__title">{title}</h1>
           <p className="screen-header__description">{description}</p>
         </div>
-        <PrimaryNav />
       </div>
       {children ? <div className="screen-header__extras">{children}</div> : null}
     </header>
-  );
-}
-
-function PrimaryNav({ variant = "panel" }: { variant?: "panel" | "tabs" }) {
-  const location = useLocation();
-  const authorSelected = location.pathname === "/problems/new";
-  const navClassName = variant === "tabs" ? "primary-nav primary-nav--tabs" : "primary-nav glass-panel";
-
-  return (
-    <nav aria-label="Primary" className={navClassName}>
-      <Link className={`primary-nav__link${!authorSelected ? " primary-nav__link--active" : ""}`} to="/">
-        Browse Problems
-      </Link>
-      <Link className={`primary-nav__link${authorSelected ? " primary-nav__link--active" : ""}`} to="/problems/new">
-        Author Problems
-      </Link>
-    </nav>
   );
 }
 
@@ -206,7 +232,7 @@ function trackForProblem(problem: ProblemSummary): ProblemTrack {
   return problem.type === "SQL" ? "Data" : "Algorithms";
 }
 
-function statusForProblem(problem: ProblemSummary): CatalogStatus {
+function statusForProblem(problem: Pick<ProblemSummary, "slug">): CatalogStatus {
   const seed = hashString(problem.slug);
 
   if (problem.slug.includes("two-sum") || problem.slug.includes("merge-intervals") || seed % 6 === 0) {
@@ -449,11 +475,358 @@ function MarkdownBlock({ content }: { content: string }) {
             return <code className="markdown-block__inline">{children}</code>;
           },
         }}
-        remarkPlugins={[remarkGfm]}
+        remarkPlugins={[remarkGfm, remarkUnderline]}
       >
         {content}
       </ReactMarkdown>
     </div>
+  );
+}
+
+function constraintItemsFromMarkdown(value?: string | null) {
+  return (value ?? "")
+    .split(/\r?\n/)
+    .map((line) => line.trim().replace(/^[-*]\s+/, "").trim().replace(/^`+|`+$/g, "").trim())
+    .filter(Boolean);
+}
+
+function remarkUnderline() {
+  return (tree: MarkdownNode) => {
+    transformUnderlineNodes(tree);
+  };
+}
+
+function transformUnderlineNodes(node: MarkdownNode) {
+  if (!node.children) {
+    return;
+  }
+
+  const nextChildren: MarkdownNode[] = [];
+
+  node.children.forEach((child) => {
+    if (child.type === "text" && child.value?.includes("++")) {
+      nextChildren.push(...splitUnderlineText(child.value));
+      return;
+    }
+
+    transformUnderlineNodes(child);
+    nextChildren.push(child);
+  });
+
+  node.children = nextChildren;
+}
+
+function splitUnderlineText(value: string): MarkdownNode[] {
+  const nodes: MarkdownNode[] = [];
+  const pattern = /\+\+([\s\S]+?)\+\+/g;
+  let cursor = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = pattern.exec(value)) !== null) {
+    if (match.index > cursor) {
+      nodes.push({ type: "text", value: value.slice(cursor, match.index) });
+    }
+
+    nodes.push({
+      type: "underline",
+      data: {
+        hName: "u",
+      },
+      children: [{ type: "text", value: match[1] }],
+    });
+    cursor = match.index + match[0].length;
+  }
+
+  if (cursor < value.length) {
+    nodes.push({ type: "text", value: value.slice(cursor) });
+  }
+
+  return nodes.length > 0 ? nodes : [{ type: "text", value }];
+}
+
+function MarkdownPreview({ content }: { content: string }) {
+  return (
+    <div className="min-h-[108px] p-3 text-[14px] leading-6 text-slate-700">
+      {content.trim() ? (
+        <ReactMarkdown
+          components={{
+            code({ children, className }) {
+              const isBlock = (className ?? "").includes("language-");
+              if (isBlock) {
+                return (
+                  <pre className="my-2 overflow-auto rounded-lg bg-slate-950 p-3 text-[12px] leading-5 text-slate-100">
+                    <code>{children}</code>
+                  </pre>
+                );
+              }
+
+              return <code className="rounded bg-slate-100 px-1 py-0.5 font-mono text-[12px] text-slate-900">{children}</code>;
+            },
+            a({ children, href }) {
+              return (
+                <a className="font-semibold text-[#3B82F6] underline-offset-2 hover:underline" href={href}>
+                  {children}
+                </a>
+              );
+            },
+          }}
+          remarkPlugins={[remarkGfm, remarkUnderline]}
+        >
+          {content}
+        </ReactMarkdown>
+      ) : (
+        <p className="text-slate-400">Preview will appear here.</p>
+      )}
+    </div>
+  );
+}
+
+type FormSelectOption<T extends string> = {
+  disabled?: boolean;
+  label: string;
+  value: T;
+};
+
+type FormSelectProps<T extends string> = {
+  ariaLabel: string;
+  className?: string;
+  disabled?: boolean;
+  onValueChange: (value: T) => void;
+  options: readonly FormSelectOption<T>[];
+  value: T;
+};
+
+function FormSelect<T extends string>({
+  ariaLabel,
+  className = "",
+  disabled = false,
+  onValueChange,
+  options,
+  value,
+}: FormSelectProps<T>) {
+  return (
+    <Select.Root disabled={disabled} value={value} onValueChange={(nextValue) => onValueChange(nextValue as T)}>
+      <Select.Trigger aria-label={ariaLabel} className={`form-select-trigger ${className}`} disabled={disabled}>
+        <Select.Value />
+        <Select.Icon asChild>
+          <ChevronDown size={14} strokeWidth={2.35} />
+        </Select.Icon>
+      </Select.Trigger>
+      <Select.Portal>
+        <Select.Content className="form-select-content" collisionPadding={12} position="popper" sideOffset={6}>
+          <Select.Viewport className="p-1">
+            {options.map((option) => (
+              <Select.Item
+                className="form-select-item"
+                disabled={option.disabled}
+                key={option.value}
+                value={option.value}
+              >
+                <Select.ItemText>{option.label}</Select.ItemText>
+                <Select.ItemIndicator className="form-select-item__indicator">
+                  <Check size={13} strokeWidth={2.5} />
+                </Select.ItemIndicator>
+              </Select.Item>
+            ))}
+          </Select.Viewport>
+        </Select.Content>
+      </Select.Portal>
+    </Select.Root>
+  );
+}
+
+function FieldError({ message }: { message?: string }) {
+  if (!message) {
+    return null;
+  }
+
+  return <p className="form-error">{message}</p>;
+}
+
+type MarkdownEditorProps = {
+  activeTab: "write" | "preview";
+  onChange: (value: string) => void;
+  onTabChange: (tab: "write" | "preview") => void;
+  value: string;
+};
+
+function MarkdownEditor({ activeTab, onChange, onTabChange, value }: MarkdownEditorProps) {
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  function updateSelection(nextValue: string, selectionStart: number, selectionEnd = selectionStart) {
+    onChange(nextValue);
+    window.requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+      textareaRef.current?.setSelectionRange(selectionStart, selectionEnd);
+    });
+  }
+
+  function withSelection(format: (selected: string) => { text: string; cursorStart?: number; cursorEnd?: number }) {
+    const textarea = textareaRef.current;
+    const selectionStart = textarea?.selectionStart ?? value.length;
+    const selectionEnd = textarea?.selectionEnd ?? value.length;
+    const selected = value.slice(selectionStart, selectionEnd);
+    const formatted = format(selected);
+    const nextValue = `${value.slice(0, selectionStart)}${formatted.text}${value.slice(selectionEnd)}`;
+    const cursorStart = selectionStart + (formatted.cursorStart ?? formatted.text.length);
+    const cursorEnd = selectionStart + (formatted.cursorEnd ?? formatted.cursorStart ?? formatted.text.length);
+
+    updateSelection(nextValue, cursorStart, cursorEnd);
+  }
+
+  function prefixLines(prefixer: (index: number) => string) {
+    withSelection((selected) => {
+      const fallback = "List item";
+      const lines = (selected || fallback).split(/\r?\n/);
+      return {
+        text: lines.map((line, index) => `${prefixer(index)}${line.replace(/^([-*]|\d+\.)\s+/, "")}`).join("\n"),
+      };
+    });
+  }
+
+  function stripFormatting(text: string) {
+    return text
+      .replace(/\*\*([^*]+)\*\*/g, "$1")
+      .replace(/\*([^*]+)\*/g, "$1")
+      .replace(/\+\+([\s\S]+?)\+\+/g, "$1")
+      .replace(/`([^`]+)`/g, "$1")
+      .replace(/^#{1,6}\s+/gm, "")
+      .replace(/^([-*]|\d+\.)\s+/gm, "")
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1");
+  }
+
+  function applyFormat(format: string) {
+    onTabChange("write");
+
+    if (format === "heading") {
+      withSelection((selected) => ({ text: `## ${selected || "Heading"}` }));
+      return;
+    }
+
+    if (format === "inline-code") {
+      withSelection((selected) => ({ text: `\`${selected || "code"}\`` }));
+      return;
+    }
+
+    if (format === "code-block") {
+      withSelection((selected) => ({ text: `\n\`\`\`\n${selected || "code"}\n\`\`\`\n` }));
+    }
+  }
+
+  const toolbarActions = [
+    {
+      label: "Bold",
+      icon: Bold,
+      action: () => withSelection((selected) => ({ text: `**${selected || "bold text"}**` })),
+    },
+    {
+      label: "Italic",
+      icon: Italic,
+      action: () => withSelection((selected) => ({ text: `*${selected || "italic text"}*` })),
+    },
+    {
+      label: "Underline",
+      icon: Underline,
+      action: () => withSelection((selected) => ({ text: `++${selected || "underlined text"}++` })),
+    },
+    {
+      label: "Bullet list",
+      icon: List,
+      action: () => prefixLines(() => "- "),
+    },
+    {
+      label: "Numbered list",
+      icon: ListOrdered,
+      action: () => prefixLines((index) => `${index + 1}. `),
+    },
+    {
+      label: "Link",
+      icon: Link2,
+      action: () => withSelection((selected) => ({ text: `[${selected || "link text"}](https://example.com)` })),
+    },
+    {
+      label: "Image",
+      icon: FileImage,
+      action: () => withSelection((selected) => ({ text: `![${selected || "alt text"}](https://example.com/image.png)` })),
+    },
+    {
+      label: "Code block",
+      icon: Code2,
+      action: () => applyFormat("code-block"),
+    },
+    {
+      label: "Clear formatting",
+      icon: Eraser,
+      action: () =>
+        withSelection((selected) => {
+          const source = selected || value;
+          const cleaned = stripFormatting(source);
+          return { text: cleaned };
+        }),
+    },
+  ];
+  const editorFormatOptions = [
+    { label: "Paragraph", value: "paragraph" },
+    { label: "Heading", value: "heading" },
+    { label: "Inline code", value: "inline-code" },
+    { label: "Code block", value: "code-block" },
+  ] as const;
+
+  return (
+    <section className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+      <div className="flex items-end gap-4 border-b border-slate-200 px-3 pt-2">
+        {(["write", "preview"] as const).map((tab) => (
+          <button
+            className={`border-b-2 px-1 pb-2 text-[13px] font-semibold capitalize ${
+              activeTab === tab
+                ? "border-[#3B82F6] text-[#3B82F6]"
+                : "border-transparent text-slate-500 hover:text-slate-900"
+            }`}
+            key={tab}
+            onClick={() => onTabChange(tab)}
+            type="button"
+          >
+            {tab}
+          </button>
+        ))}
+      </div>
+      <div className="flex flex-wrap items-center gap-1.5 border-b border-slate-200 bg-slate-50 px-3 py-2">
+        <FormSelect
+          ariaLabel="Editor format"
+          className="h-8 w-32 text-[12px]"
+          options={editorFormatOptions}
+          value="paragraph"
+          onValueChange={(value) => {
+            if (value !== "paragraph") {
+              applyFormat(value);
+            }
+          }}
+        />
+        {toolbarActions.map(({ action, icon: Icon, label }) => (
+          <button
+            aria-label={label}
+            className="inline-flex h-11 w-11 items-center justify-center rounded-lg text-slate-700 hover:bg-white hover:text-slate-950 focus:outline-none focus:ring-2 focus:ring-[#3B82F6]/25 md:h-8 md:w-8"
+            key={label}
+            onClick={action}
+            type="button"
+          >
+            <Icon size={16} />
+          </button>
+        ))}
+      </div>
+      {activeTab === "write" ? (
+        <textarea
+          ref={textareaRef}
+          aria-label="Problem description markdown"
+          className="!min-h-[132px] !w-full resize-y !rounded-none !border-0 !bg-white !p-3 text-[14px] !text-slate-800 !shadow-none outline-none placeholder:text-slate-400 focus:!ring-0"
+          placeholder="Describe the problem in markdown..."
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+        />
+      ) : (
+        <MarkdownPreview content={value} />
+      )}
+    </section>
   );
 }
 
@@ -535,6 +908,52 @@ function configureMonacoTheme(monaco: Monaco) {
       "editorGutter.background": "#FBFBFD",
     },
   });
+
+  monaco.editor.defineTheme("juro-author-dark", {
+    base: "vs-dark",
+    inherit: true,
+    rules: [
+      { token: "comment", foreground: "64748B", fontStyle: "italic" },
+      { token: "keyword", foreground: "A78BFA" },
+      { token: "string", foreground: "86EFAC" },
+      { token: "number", foreground: "FBBF24" },
+      { token: "type", foreground: "7DD3FC" },
+    ],
+    colors: {
+      "editor.background": "#0B1117",
+      "editorLineNumber.foreground": "#64748B",
+      "editorLineNumber.activeForeground": "#CBD5E1",
+      "editorCursor.foreground": "#3B82F6",
+      "editor.selectionBackground": "#1D4ED866",
+      "editor.lineHighlightBackground": "#111827",
+      "editorGutter.background": "#0B1117",
+      "editorBracketMatch.background": "#1D4ED855",
+      "editorBracketMatch.border": "#3B82F6",
+    },
+  });
+
+  monaco.editor.defineTheme("juro-author-light", {
+    base: "vs",
+    inherit: true,
+    rules: [
+      { token: "comment", foreground: "94A3B8", fontStyle: "italic" },
+      { token: "keyword", foreground: "2563EB" },
+      { token: "string", foreground: "047857" },
+      { token: "number", foreground: "B45309" },
+      { token: "type", foreground: "0369A1" },
+    ],
+    colors: {
+      "editor.background": "#FFFFFF",
+      "editorLineNumber.foreground": "#CBD5E1",
+      "editorLineNumber.activeForeground": "#475569",
+      "editorCursor.foreground": "#3B82F6",
+      "editor.selectionBackground": "#BFDBFE",
+      "editor.lineHighlightBackground": "#F8FAFC",
+      "editorGutter.background": "#FFFFFF",
+      "editorBracketMatch.background": "#DBEAFE",
+      "editorBracketMatch.border": "#3B82F6",
+    },
+  });
 }
 
 function looksLikeJson(value: string) {
@@ -590,6 +1009,7 @@ type CodePreviewProps = {
 };
 
 function CodePreview({ value, language, minHeight = 104, maxHeight = 220 }: CodePreviewProps) {
+  const { theme } = useAppTheme();
   const normalized = formatCodeSnippet(value, language);
 
   return (
@@ -621,7 +1041,7 @@ function CodePreview({ value, language, minHeight = 104, maxHeight = 220 }: Code
           },
           wordWrap: "on",
         }}
-        theme="juro-liquid"
+        theme={theme === "dark" ? "juro-author-dark" : "juro-liquid"}
         value={normalized}
       />
     </div>
@@ -629,10 +1049,14 @@ function CodePreview({ value, language, minHeight = 104, maxHeight = 220 }: Code
 }
 
 function ProblemListPage() {
+  const navigate = useNavigate();
   const pageSize = useResponsivePageSize();
   const [pageIndex, setPageIndex] = useState(0);
   const [problems, setProblems] = useState<ProblemSummary[]>([]);
-  const [isEditProblemOpen, setIsEditProblemOpen] = useState(true);
+  const [editProblemMode, setEditProblemMode] = useState<"edit" | "new" | null>(null);
+  const [selectedProblem, setSelectedProblem] = useState<CatalogProblem | null>(null);
+  const [openActionMenuId, setOpenActionMenuId] = useState<string | null>(null);
+  const [deleteCandidate, setDeleteCandidate] = useState<CatalogProblem | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [trackFilter, setTrackFilter] = useState<ProblemTrack | "ALL">("ALL");
   const [difficultyFilter, setDifficultyFilter] = useState<ProblemDifficulty | "ALL">("ALL");
@@ -722,6 +1146,50 @@ function ProblemListPage() {
   ];
 
   useEffect(() => {
+    if (!openActionMenuId) {
+      return;
+    }
+
+    function handlePointerDown(event: MouseEvent) {
+      const target = event.target;
+      if (target instanceof Element && target.closest("[data-action-menu-root]")) {
+        return;
+      }
+
+      setOpenActionMenuId(null);
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setOpenActionMenuId(null);
+      }
+    }
+
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [openActionMenuId]);
+
+  useEffect(() => {
+    if (!deleteCandidate) {
+      return;
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setDeleteCandidate(null);
+      }
+    }
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [deleteCandidate]);
+
+  useEffect(() => {
     setPageIndex(0);
   }, [difficultyFilter, languageFilter, pageSize, searchQuery, statusFilter, trackFilter]);
 
@@ -767,6 +1235,35 @@ function ProblemListPage() {
     setStatusFilter("ALL");
   }
 
+  function openNewProblemModal() {
+    setSelectedProblem(null);
+    setEditProblemMode("new");
+  }
+
+  function openEditProblemModal(problem: CatalogProblem) {
+    setSelectedProblem(problem);
+    setEditProblemMode("edit");
+    setOpenActionMenuId(null);
+  }
+
+  function closeEditProblemModal() {
+    setEditProblemMode(null);
+    setSelectedProblem(null);
+  }
+
+  function confirmDeleteProblem() {
+    if (!deleteCandidate) {
+      return;
+    }
+
+    setProblems((current) => current.filter((problem) => problem.id !== deleteCandidate.id));
+    setDeleteCandidate(null);
+  }
+
+  function navigateToProblem(problemId: string) {
+    navigate(`/problems/${problemId}`);
+  }
+
   return (
     <section className="viewport-page viewport-page--catalog">
       <div className="catalog-shell">
@@ -777,12 +1274,12 @@ function ProblemListPage() {
                 ←
               </Link>
               <h1>Problem Bank</h1>
-              <button aria-label="Settings" className="icon-button" type="button">
-                ⚙
-              </button>
-            </div>
-            <div className="problem-bank-header__tabs">
-              <PrimaryNav variant="tabs" />
+              <div className="problem-bank-header__actions">
+                <ThemeToggleButton />
+                <button aria-label="Settings" className="icon-button" type="button">
+                  <Settings size={17} strokeWidth={2.25} />
+                </button>
+              </div>
             </div>
           </header>
 
@@ -796,7 +1293,13 @@ function ProblemListPage() {
                 onChange={(event) => setSearchQuery(event.target.value)}
               />
             </label>
-            <div className="catalog-count">{problemBankDisplayTotal} problems</div>
+            <div className="catalog-toolbar__meta">
+              <button aria-label="New Problem" className="new-problem-button" onClick={openNewProblemModal} type="button">
+                <Plus size={15} strokeWidth={2.4} />
+                <span>New Problem</span>
+              </button>
+              <div className="catalog-count">{problemBankDisplayTotal} problems</div>
+            </div>
           </div>
 
           <div className="catalog-filters" aria-label="Problem filters">
@@ -877,7 +1380,7 @@ function ProblemListPage() {
             <div className="catalog-table__head" role="row">
               {tableHeaders.map((header) => (
                 <button
-                  className={`catalog-sort catalog-sort--${header.align ?? "left"}${
+                  className={`catalog-sort catalog-sort--${header.key} catalog-sort--${header.align ?? "left"}${
                     sortKey === header.key ? " catalog-sort--active" : ""
                   }`}
                   key={header.key}
@@ -888,6 +1391,7 @@ function ProblemListPage() {
                   <span className="catalog-sort__glyph">{sortGlyph(header.key)}</span>
                 </button>
               ))}
+              <div className="catalog-actions-head">Actions</div>
             </div>
 
             <div className="catalog-table__body">
@@ -897,8 +1401,24 @@ function ProblemListPage() {
                 <div className="empty-state">No problems match the current filters.</div>
               ) : null}
 
-              {pagedProblems.map((problem) => (
-                <Link className="catalog-row" key={problem.id} to={`/problems/${problem.id}`}>
+              {pagedProblems.map((problem, index) => (
+                <div
+                  className="catalog-row"
+                  key={problem.id}
+                  onClick={() => navigateToProblem(problem.id)}
+                  onKeyDown={(event) => {
+                    if (event.target !== event.currentTarget) {
+                      return;
+                    }
+
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      navigateToProblem(problem.id);
+                    }
+                  }}
+                  role="link"
+                  tabIndex={0}
+                >
                   <div className="catalog-row__cell catalog-row__status" data-label="Status">
                     <span className={`status-label status-label--${problem.status.toLowerCase().replace("_", "-")}`}>
                       <span className="status-label__mark" aria-hidden="true">
@@ -915,20 +1435,20 @@ function ProblemListPage() {
                     </div>
                   </div>
 
-                  <div className="catalog-row__cell" data-label="Language">
+                  <div className="catalog-row__cell catalog-row__cell--language" data-label="Language">
                     <span className={`tag tag--language tag--${problem.type.toLowerCase()}`}>
                       {displayLanguage(problem.type)}
                     </span>
                   </div>
 
-                  <div className="catalog-row__cell" data-label="Difficulty">
+                  <div className="catalog-row__cell catalog-row__cell--difficulty" data-label="Difficulty">
                     <span className={`tag tag--difficulty tag--${problem.difficulty.toLowerCase()}`}>
                       {displayDifficulty(problem.difficulty)}
                     </span>
                   </div>
 
                   <div
-                    className={`catalog-row__cell catalog-row__cell--number${
+                    className={`catalog-row__cell catalog-row__cell--number catalog-row__cell--avg-time${
                       problem.avgTimeMinutes === null ? " catalog-row__cell--muted" : ""
                     }`}
                     data-label="Avg Time"
@@ -936,10 +1456,62 @@ function ProblemListPage() {
                     {formatAvgTime(problem.avgTimeMinutes)}
                   </div>
 
-                  <div className="catalog-row__cell catalog-row__cell--number catalog-row__cell--muted" data-label="Updated">
+                  <div
+                    className="catalog-row__cell catalog-row__cell--number catalog-row__cell--muted catalog-row__cell--updated"
+                    data-label="Updated"
+                  >
                     {formatCatalogDate(problem.updatedAt)}
                   </div>
-                </Link>
+
+                  <div className="catalog-row__cell catalog-row__actions" data-action-menu-root data-label="Actions">
+                    <button
+                      aria-expanded={openActionMenuId === problem.id}
+                      aria-haspopup="menu"
+                      aria-label={`Actions for ${problem.displayTitle}`}
+                      className="action-menu-trigger"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setOpenActionMenuId((current) => (current === problem.id ? null : problem.id));
+                      }}
+                      type="button"
+                    >
+                      <MoreVertical size={17} strokeWidth={2.3} />
+                    </button>
+
+                    {openActionMenuId === problem.id ? (
+                      <div
+                        className={`action-menu${index >= pagedProblems.length - 2 ? " action-menu--up" : ""}`}
+                        role="menu"
+                      >
+                        <button
+                          className="action-menu__item"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            openEditProblemModal(problem);
+                          }}
+                          role="menuitem"
+                          type="button"
+                        >
+                          <Pencil size={14} />
+                          Edit
+                        </button>
+                        <button
+                          className="action-menu__item action-menu__item--danger"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setDeleteCandidate(problem);
+                            setOpenActionMenuId(null);
+                          }}
+                          role="menuitem"
+                          type="button"
+                        >
+                          <Trash2 size={14} />
+                          Delete
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
               ))}
             </div>
           </section>
@@ -976,6 +1548,10 @@ function ProblemListPage() {
               )}
             </div>
 
+            <div className="catalog-pager__mobile-label">
+              Page {safePageIndex + 1} of {totalPages}
+            </div>
+
             <button
               aria-label="Next page"
               className="pager-arrow"
@@ -989,19 +1565,82 @@ function ProblemListPage() {
         </section>
       </div>
 
-      {isEditProblemOpen ? <EditProblemDrawer onClose={() => setIsEditProblemOpen(false)} /> : null}
+      {deleteCandidate ? (
+        <div
+          className="delete-confirmation-backdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) {
+              setDeleteCandidate(null);
+            }
+          }}
+        >
+          <section
+            aria-label={`Delete ${deleteCandidate.displayTitle}`}
+            aria-modal="true"
+            className="delete-confirmation"
+            role="alertdialog"
+          >
+            <p className="delete-confirmation__message">
+              Delete {deleteCandidate.displayTitle}? This cannot be undone.
+            </p>
+            <div className="delete-confirmation__actions">
+              <button className="delete-confirmation__cancel" onClick={() => setDeleteCandidate(null)} type="button">
+                Cancel
+              </button>
+              <button className="delete-confirmation__delete" onClick={confirmDeleteProblem} type="button">
+                Delete
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
+
+      {editProblemMode ? (
+        <EditProblemDrawer
+          key={editProblemMode === "edit" ? selectedProblem?.id ?? "edit" : "new"}
+          mode={editProblemMode}
+          onClose={closeEditProblemModal}
+          problem={selectedProblem}
+        />
+      ) : null}
     </section>
   );
 }
 
 type EditProblemDrawerProps = {
+  mode: "edit" | "new";
   onClose: () => void;
+  problem?: CatalogProblem | null;
 };
 
+type TestValueType = "int" | "long" | "double" | "boolean" | "String" | "int[]" | "String[]" | "Object";
+
 type TestCaseDraft = {
+  inputType: TestValueType;
   input: string;
   expectedOutput: string;
   hidden: boolean;
+};
+
+type ExampleDraft = {
+  id: string;
+  input: string;
+  output: string;
+  explanation: string;
+};
+
+type EditProblemDraft = {
+  title: string;
+  slug: string;
+  languages: ProblemType[];
+  difficulty: ProblemDifficulty | null;
+  returnType: TestValueType;
+  tags: string[];
+  description: string;
+  examples: ExampleDraft[];
+  starterCode: string;
+  referenceSolution: string;
+  testCases: TestCaseDraft[];
 };
 
 function slugifyTitle(value: string) {
@@ -1012,31 +1651,216 @@ function slugifyTitle(value: string) {
     .replace(/^-+|-+$/g, "");
 }
 
-function EditProblemDrawer({ onClose }: EditProblemDrawerProps) {
-  const [title, setTitle] = useState("Climb Stairs Count");
-  const [slug, setSlug] = useState("climb-stairs-count");
+function createExampleDraft(index: number, values?: Partial<Omit<ExampleDraft, "id">>): ExampleDraft {
+  return {
+    id: `example-${Date.now()}-${index}`,
+    input: values?.input ?? "",
+    output: values?.output ?? "",
+    explanation: values?.explanation ?? "",
+  };
+}
+
+const testValueTypes: TestValueType[] = ["int", "long", "double", "boolean", "String", "int[]", "String[]", "Object"];
+const maxTagCount = 5;
+
+function validateTypedValue(type: TestValueType, value: string) {
+  const trimmed = value.trim();
+
+  if (!trimmed) {
+    return null;
+  }
+
+  const isValid = (() => {
+    if (type === "int" || type === "long") {
+      return /^-?\d+$/.test(trimmed);
+    }
+
+    if (type === "double") {
+      return /^-?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?$/i.test(trimmed);
+    }
+
+    if (type === "boolean") {
+      return /^(true|false)$/i.test(trimmed);
+    }
+
+    if (type === "String") {
+      return true;
+    }
+
+    if (type === "int[]") {
+      const normalized = trimmed.replace(/^\[/, "").replace(/\]$/, "").trim();
+      return normalized.length === 0 || normalized.split(",").every((item) => /^-?\d+$/.test(item.trim()));
+    }
+
+    if (type === "String[]") {
+      const normalized = trimmed.replace(/^\[/, "").replace(/\]$/, "").trim();
+      return normalized.length === 0 || normalized.split(",").every((item) => item.trim().length > 0);
+    }
+
+    try {
+      const parsed = JSON.parse(trimmed) as unknown;
+      return Boolean(parsed) && typeof parsed === "object" && !Array.isArray(parsed);
+    } catch {
+      return false;
+    }
+  })();
+
+  return isValid ? null : `Expected ${type}, got '${trimmed}'`;
+}
+
+const languageSelectOptions = [
+  { label: "JAVA", value: "JAVA" },
+  { label: "SQL", value: "SQL" },
+] as const satisfies readonly FormSelectOption<ProblemType>[];
+
+const returnTypeOptions = testValueTypes.map((type) => ({ label: type, value: type })) satisfies FormSelectOption<TestValueType>[];
+
+const problemSchema = z
+  .object({
+    title: z.string().min(3, "Title must be at least 3 characters").max(100, "Title must be 100 characters or fewer"),
+    slug: z
+      .string()
+      .min(1, "Slug is required")
+      .regex(/^[a-z0-9-]+$/, "Slug must be lowercase letters, numbers, and dashes only"),
+    languages: z.array(z.enum(["JAVA", "SQL"])).min(1, "Select at least one language"),
+    difficulty: z.enum(["EASY", "MEDIUM", "HARD"], { error: "Select a difficulty" }),
+    returnType: z.enum(["int", "long", "double", "boolean", "String", "int[]", "String[]", "Object"]),
+    tags: z.array(z.string()).max(maxTagCount, "Maximum 5 tags allowed"),
+    description: z.string().min(10, "Description must be at least 10 characters"),
+    examples: z
+      .array(
+        z.object({
+          id: z.string().optional(),
+          input: z.string().min(1, "Input is required"),
+          output: z.string().min(1, "Output is required"),
+          explanation: z.string().optional(),
+        }),
+      )
+      .min(1, "Add at least one example"),
+    starterCode: z.string().min(1, "Starter code is required"),
+    referenceSolution: z.string().optional(),
+    testCases: z
+      .array(
+        z.object({
+          inputType: z.enum(["int", "long", "double", "boolean", "String", "int[]", "String[]", "Object"]),
+          input: z.string().min(1, "Input is required"),
+          expectedOutput: z.string().min(1, "Expected output is required"),
+          hidden: z.boolean(),
+        }),
+      )
+      .min(3, "Add at least 3 test cases"),
+  })
+  .superRefine((value, context) => {
+    value.testCases.forEach((testCase, index) => {
+      const inputError = validateTypedValue(testCase.inputType, testCase.input);
+      if (inputError) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: inputError,
+          path: ["testCases", index, "input"],
+        });
+      }
+
+      const expectedError = validateTypedValue(value.returnType, testCase.expectedOutput);
+      if (expectedError) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: expectedError,
+          path: ["testCases", index, "expectedOutput"],
+        });
+      }
+    });
+  });
+
+type ProblemFormValues = z.infer<typeof problemSchema>;
+
+function defaultEditorCode(language: ProblemType = "JAVA") {
+  if (language === "SQL") {
+    return "SELECT\n    *\nFROM table_name;";
+  }
+
+  return "class Solution {\n    public int climbStairs(int n) {\n    }\n}";
+}
+
+function defaultEditProblemDraft(): EditProblemDraft {
+  return {
+    title: "Climb Stairs Count",
+    slug: "climb-stairs-count",
+    languages: ["JAVA"],
+    difficulty: "EASY",
+    returnType: "int",
+    tags: ["cho", "dynamic-programming", "recursion"],
+    description: "You are climbing a staircase. It takes 'n' steps to reach the top.",
+    examples: [
+      createExampleDraft(0, {
+        input: "n = 2",
+        output: "2",
+        explanation: "1+1, 2",
+      }),
+    ],
+    starterCode: defaultEditorCode("JAVA"),
+    referenceSolution: defaultEditorCode("JAVA"),
+    testCases: [
+      { inputType: "int", input: "1", expectedOutput: "2", hidden: false },
+      { inputType: "int", input: "", expectedOutput: "3", hidden: true },
+    ],
+  };
+}
+
+function newProblemDraft(): EditProblemDraft {
+  return {
+    title: "",
+    slug: "",
+    languages: [],
+    difficulty: null,
+    returnType: "int",
+    tags: [],
+    description: "",
+    examples: [],
+    starterCode: "",
+    referenceSolution: "",
+    testCases: [],
+  };
+}
+
+function initialEditProblemDraft(mode: EditProblemDrawerProps["mode"], problem?: CatalogProblem | null): EditProblemDraft {
+  if (mode === "new") {
+    return newProblemDraft();
+  }
+
+  const draft = defaultEditProblemDraft();
+  if (!problem) {
+    return draft;
+  }
+
+  return {
+    ...draft,
+    title: problem.displayTitle,
+    slug: problem.slug,
+    languages: [problem.type],
+    difficulty: problem.difficulty,
+    description: problem.summary || draft.description,
+    starterCode: defaultEditorCode(problem.type),
+    referenceSolution: defaultEditorCode(problem.type),
+  };
+}
+
+function EditProblemDrawer({ mode, onClose, problem }: EditProblemDrawerProps) {
+  const initialDraft = initialEditProblemDraft(mode, problem);
+  const [title, setTitle] = useState(initialDraft.title);
+  const [slug, setSlug] = useState(initialDraft.slug);
   const [slugWasEdited, setSlugWasEdited] = useState(false);
-  const [languages, setLanguages] = useState<ProblemType[]>(["JAVA"]);
-  const [difficulty, setDifficulty] = useState<ProblemDifficulty>("EASY");
-  const [tags, setTags] = useState(["cho", "dynamic-programming", "recursion"]);
+  const [languages, setLanguages] = useState<ProblemType[]>(initialDraft.languages);
+  const [difficulty, setDifficulty] = useState<ProblemDifficulty | null>(initialDraft.difficulty);
+  const [returnType, setReturnType] = useState<TestValueType>(initialDraft.returnType);
+  const [tags, setTags] = useState(initialDraft.tags);
   const [descriptionTab, setDescriptionTab] = useState<"write" | "preview">("write");
-  const [description, setDescription] = useState("You are climbing a staircase. It takes 'n' steps to reach the top.");
-  const [examples, setExamples] = useState([
-    {
-      label: "Example 1",
-      input: "n = 2",
-      output: "2",
-      extraOutput: "12",
-      explanation: "1+1, 2",
-    },
-  ]);
-  const [starterCode, setStarterCode] = useState("class Solution {\n    public int climbStairs(int n) {\n    }\n}");
+  const [description, setDescription] = useState(initialDraft.description);
+  const [examples, setExamples] = useState<ExampleDraft[]>(initialDraft.examples);
+  const [starterCode, setStarterCode] = useState(initialDraft.starterCode);
   const [referenceExpanded, setReferenceExpanded] = useState(true);
-  const [referenceSolution, setReferenceSolution] = useState("class Solution {\n    public int climbStairs(int n) {\n    }\n}");
-  const [testCases, setTestCases] = useState<TestCaseDraft[]>([
-    { input: "1", expectedOutput: "2", hidden: false },
-    { input: "", expectedOutput: "3", hidden: true },
-  ]);
+  const [referenceSolution, setReferenceSolution] = useState(initialDraft.referenceSolution);
+  const [testCases, setTestCases] = useState<TestCaseDraft[]>(initialDraft.testCases);
   const [lastSavedAt, setLastSavedAt] = useState(() => new Date(Date.now() - 2000));
   const [isAutosaving, setIsAutosaving] = useState(false);
   const [now, setNow] = useState(Date.now());
@@ -1047,23 +1871,82 @@ function EditProblemDrawer({ onClose }: EditProblemDrawerProps) {
     slug.trim().length > 0,
     languages.length > 0,
     Boolean(difficulty),
+    Boolean(returnType),
     tags.length > 0,
     description.trim().length > 0,
-    examples.length > 1,
-    starterCode.trim().length > 120,
-    referenceSolution.trim().length > 120,
+    examples.length > 0,
+    starterCode.trim().length > 0,
+    referenceSolution.trim().length > 0,
     testCases.length >= 3,
   ].filter(Boolean).length;
-  const completionPercent = Math.round((filledCompletionItems / 10) * 100);
-  const testCaseRequirementMet = testCases.length + examples.length >= 3;
+  const completionPercent = Math.round((filledCompletionItems / 11) * 100);
+  const testCaseRequirementMet = testCases.length >= 3;
   const referenceRequirementMet = referenceSolution.includes("return");
   const savedSecondsAgo = Math.max(0, Math.floor((now - lastSavedAt.getTime()) / 1000));
   const autosaveText = isAutosaving ? "Saving..." : `Saved ${savedSecondsAgo}s ago`;
+  const tagLimitReached = tags.length >= maxTagCount;
+  const formValues = {
+    title,
+    slug,
+    languages,
+    difficulty: difficulty ?? undefined,
+    returnType,
+    tags,
+    description,
+    examples,
+    starterCode,
+    referenceSolution,
+    testCases,
+  } as ProblemFormValues;
+  const {
+    formState: { errors: formErrors, isValid: isHookFormValid },
+    trigger,
+  } = useForm<ProblemFormValues>({
+    resolver: zodResolver(problemSchema),
+    mode: "onChange",
+    values: formValues,
+  });
+  const validationResult = problemSchema.safeParse(formValues);
+  const validationIssues = validationResult.success ? [] : validationResult.error.issues;
+  const isFormValid = validationResult.success && isHookFormValid;
+
+  function issueMessageFor(path: Array<string | number>) {
+    return validationIssues.find((issue) => path.every((part, index) => issue.path[index] === part))?.message;
+  }
+
+  function rootFieldError(field: keyof ProblemFormValues) {
+    const hookFormMessage = formErrors[field]?.message;
+    return typeof hookFormMessage === "string" ? hookFormMessage : issueMessageFor([field]);
+  }
+
+  function exampleFieldError(index: number, field: keyof Pick<ExampleDraft, "input" | "output">) {
+    return issueMessageFor(["examples", index, field]);
+  }
+
+  function testCaseFieldError(index: number, field: "input" | "expectedOutput") {
+    return issueMessageFor(["testCases", index, field]);
+  }
+  const submitDisabledReason = isFormValid ? undefined : "Complete the required fields and fix validation errors before submitting.";
 
   useEffect(() => {
     const interval = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    void trigger();
+  }, [description, difficulty, examples, languages, referenceSolution, returnType, slug, starterCode, tags, testCases, title, trigger]);
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        onClose();
+      }
+    }
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
 
   useEffect(() => {
     if (!autosaveHasMounted.current) {
@@ -1079,7 +1962,7 @@ function EditProblemDrawer({ onClose }: EditProblemDrawerProps) {
     }, 850);
 
     return () => window.clearTimeout(timeout);
-  }, [description, difficulty, examples, languages, referenceSolution, slug, starterCode, tags, testCases, title]);
+  }, [description, difficulty, examples, languages, referenceSolution, returnType, slug, starterCode, tags, testCases, title]);
 
   function handleTitleChange(value: string) {
     setTitle(value);
@@ -1092,7 +1975,7 @@ function EditProblemDrawer({ onClose }: EditProblemDrawerProps) {
   function toggleLanguage(language: ProblemType) {
     setLanguages((current) => {
       if (current.includes(language)) {
-        return current.length === 1 ? current : current.filter((item) => item !== language);
+        return current.filter((item) => item !== language);
       }
 
       return [...current, language];
@@ -1104,16 +1987,19 @@ function EditProblemDrawer({ onClose }: EditProblemDrawerProps) {
   }
 
   function addExample() {
-    setExamples((current) => [
-      ...current,
-      {
-        label: `Example ${current.length + 1}`,
-        input: "n = 3",
-        output: "3",
-        extraOutput: "",
-        explanation: "1+1+1, 1+2, 2+1",
-      },
-    ]);
+    setExamples((current) => [...current, createExampleDraft(current.length)]);
+  }
+
+  function updateExample(index: number, field: keyof Omit<ExampleDraft, "id">, value: string) {
+    setExamples((current) =>
+      current.map((example, currentIndex) =>
+        currentIndex === index ? { ...example, [field]: value } : example,
+      ),
+    );
+  }
+
+  function removeExample(index: number) {
+    setExamples((current) => current.filter((_, currentIndex) => currentIndex !== index));
   }
 
   function updateTestCase(index: number, field: keyof TestCaseDraft, value: string | boolean) {
@@ -1125,7 +2011,7 @@ function EditProblemDrawer({ onClose }: EditProblemDrawerProps) {
   }
 
   function addTestCase() {
-    setTestCases((current) => [...current, { input: "", expectedOutput: "", hidden: false }]);
+    setTestCases((current) => [...current, { inputType: "int", input: "", expectedOutput: "", hidden: false }]);
   }
 
   const languageStyles: Record<ProblemType, { selected: string; unselected: string }> = {
@@ -1155,215 +2041,327 @@ function EditProblemDrawer({ onClose }: EditProblemDrawerProps) {
       preview: "bg-red-50 text-red-700 border-red-200",
     },
   };
-  const toolbarIcons = [
-    Bold,
-    Italic,
-    Underline,
-    List,
-    ListOrdered,
-    Link2,
-    FileImage,
-    Code2,
-    Eraser,
-  ];
   const readinessItems = [
-    { label: "Title", complete: title.trim().length > 0 },
-    { label: "Difficulty", complete: Boolean(difficulty) },
-    { label: "At least 1 example", complete: examples.length > 0 },
-    { label: "At least 3 test cases", complete: testCaseRequirementMet },
+    { label: "Title", complete: !rootFieldError("title") },
+    { label: "Difficulty", complete: !rootFieldError("difficulty") },
+    { label: "At least 1 example", complete: !rootFieldError("examples") },
+    { label: "At least 3 test cases", complete: testCaseRequirementMet && !rootFieldError("testCases") },
     { label: "Reference solution", complete: referenceRequirementMet },
   ];
+  const dialogTitle = mode === "new" ? "New Problem" : "Edit Problem";
+  const primaryActionLabel = mode === "new" ? "Create" : "Submit for review";
+  const editorLanguage = languages[0] ?? problem?.type ?? "JAVA";
+  const previewLanguage = languages[0];
+  const previewDifficultyClass = difficulty
+    ? difficultyStyles[difficulty].preview
+    : "border-slate-200 bg-slate-50 text-slate-500";
+  const livePreviewContent = (
+    <>
+      <section className="min-w-0 overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-3 shadow-sm">
+        <div className="flex items-start justify-between gap-3">
+          <h4 className="text-[16px] font-bold text-[var(--text-primary)]">{title || "Untitled Problem"}</h4>
+          <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-cyan-100 px-2 py-1 text-[11px] font-bold text-cyan-700">
+            <Clock3 size={12} />
+          </span>
+        </div>
+        <div className="mt-2 flex flex-wrap gap-2">
+          <span className={`rounded-full border px-2.5 py-1 text-[12px] font-bold ${previewDifficultyClass}`}>
+            {difficulty ? displayDifficulty(difficulty) : "Difficulty"}
+          </span>
+          {previewLanguage ? (
+            <span
+              className={`rounded-full border px-2.5 py-1 text-[12px] font-bold ${languageStyles[previewLanguage].selected}`}
+            >
+              {previewLanguage}
+            </span>
+          ) : (
+            <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[12px] font-bold text-slate-500">
+              Language
+            </span>
+          )}
+          <span className="inline-flex items-center gap-1 rounded-full border border-red-200 bg-red-50 px-2.5 py-1 text-[12px] font-bold text-red-700">
+            <span className="h-1.5 w-1.5 rounded-full bg-red-500" />
+            Hard
+          </span>
+          <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[12px] font-bold text-slate-500">
+            {examples.length} {examples.length === 1 ? "example" : "examples"}
+          </span>
+        </div>
+        <p className="mt-3 line-clamp-2 text-[14px] leading-5 text-slate-700">
+          Count how many distinct ways exist to reach the top, ccd dert from each tere.
+        </p>
+      </section>
+
+      <dl className="space-y-1.5 text-[14px]">
+        {[
+          ["Created", "Mar 10, 2026"],
+          ["Last edited", "Apr 22, 2026"],
+          ["Submissions", "1,204"],
+          ["Author", "You"],
+        ].map(([label, value]) => (
+          <div className="flex gap-1" key={label}>
+            <dt className="font-semibold text-[var(--text-secondary)]">{label}:</dt>
+            <dd className="text-[var(--text-primary)]">{value}</dd>
+          </div>
+        ))}
+      </dl>
+
+      <div className="space-y-2.5">
+        {readinessItems.map((item) => (
+          <div className="flex items-center gap-2 text-[14px] font-semibold text-[var(--text-primary)]" key={item.label}>
+            {item.complete ? (
+              <Check className="text-emerald-600" size={18} strokeWidth={2.5} />
+            ) : (
+              <Circle className="text-slate-400" size={17} />
+            )}
+            {item.label}
+          </div>
+        ))}
+      </div>
+    </>
+  );
 
   return (
-    <div className="fixed inset-0 z-[100] overflow-hidden bg-slate-950/20 !p-4 font-['Inter',system-ui,sans-serif] text-[14px] text-slate-900">
-      <button
-        aria-label="Close edit problem"
-        className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-white/90 text-slate-500 shadow-sm ring-1 ring-slate-200 transition hover:bg-slate-100 hover:text-slate-950 focus:outline-none focus:ring-2 focus:ring-[#3B82F6]/35"
-        onClick={onClose}
-        style={{ position: "fixed", left: "min(calc(100vw - 3.5rem), 42rem)", top: "1.5rem", zIndex: 200 }}
-        type="button"
-      >
-        <X size={20} strokeWidth={2.25} />
-      </button>
+    <div
+      className="fixed inset-0 z-[100] flex items-center justify-center overflow-hidden bg-black/40 !p-0 font-['Inter',system-ui,sans-serif] text-[14px] text-slate-900 backdrop-blur-sm md:!p-4 lg:!p-6"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) {
+          onClose();
+        }
+      }}
+    >
       <section
-        aria-label="Edit Problem"
+        aria-label={dialogTitle}
         aria-modal="true"
-        className="relative mx-auto grid h-[calc(100vh-2rem)] min-w-0 w-[calc(100vw-2rem)] max-w-[calc(100vw-2rem)] grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl shadow-slate-900/10 xl:max-w-6xl"
+        className="relative grid h-screen w-screen min-w-0 grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden rounded-none border-0 border-[var(--border)] bg-[var(--bg-card)] text-[var(--text-primary)] shadow-xl shadow-slate-900/10 md:h-[92vh] md:w-[92vw] md:rounded-xl md:border lg:h-[min(800px,90vh)] lg:w-[min(1100px,90vw)]"
         role="dialog"
-        style={{ height: "min(calc(100vh - 2rem), 40rem)", width: "min(calc(100vw - 2rem), 42rem)" }}
       >
-        <header className="flex h-14 items-center justify-between border-b border-slate-200 px-5">
-          <h2 className="text-[20px] font-bold tracking-[-0.01em] text-slate-950">Edit Problem</h2>
+        <button
+          aria-label={`Close ${dialogTitle.toLowerCase()}`}
+          className="absolute left-3 top-3 z-10 inline-flex h-11 w-11 items-center justify-center rounded-lg bg-[var(--bg-card)] text-[var(--text-secondary)] shadow-sm ring-1 ring-[var(--border)] transition hover:bg-[var(--bg-elevated)] hover:text-[var(--text-primary)] focus:outline-none focus:ring-2 focus:ring-[#3B82F6]/35 md:h-8 md:w-8"
+          onClick={onClose}
+          type="button"
+        >
+          <X size={20} strokeWidth={2.25} />
+        </button>
+        <header className="relative flex h-16 items-center justify-between border-b border-[var(--border)] px-5 pl-16 md:h-14 md:pl-14">
+          <div className="flex min-w-0 items-center gap-2">
+            <h2 className="truncate text-[20px] font-bold tracking-[-0.01em] text-[var(--text-primary)]">{dialogTitle}</h2>
+            <span className="shrink-0 rounded-full bg-blue-50 px-2.5 py-1 text-[12px] font-bold text-[#3B82F6]">
+              {completionPercent}%
+            </span>
+          </div>
+          <div className="absolute inset-x-0 bottom-0 h-[3px] bg-[var(--bg-elevated)]" aria-hidden="true">
+            <div
+              className="h-full bg-[#3B82F6] transition-[width] duration-300"
+              style={{ width: `${completionPercent}%` }}
+            />
+          </div>
         </header>
 
-        <div className="grid min-h-0 grid-cols-[minmax(0,1.55fr)_minmax(0,1fr)] divide-x divide-slate-200 bg-slate-50/60">
-          <main className="min-h-0 min-w-0 overflow-y-auto overflow-x-hidden bg-white px-4 py-4">
+        <div className="edit-problem-modal__body grid min-h-0 overflow-y-auto overflow-x-hidden bg-[var(--bg-elevated)] md:grid-cols-[minmax(0,1.55fr)_minmax(0,1fr)] md:divide-x md:divide-[var(--border)]">
+          <details className="border-b border-[var(--border)] bg-[var(--bg-elevated)] px-4 py-3 md:hidden">
+            <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between rounded-lg text-[14px] font-bold text-[var(--text-primary)]">
+              Preview <ChevronDown size={16} />
+            </summary>
+            <div className="mt-3 space-y-4">{livePreviewContent}</div>
+          </details>
+
+          <main className="min-w-0 bg-[var(--bg-card)] px-4 py-4 md:px-5 md:py-5">
             <div className="space-y-4 pb-4">
-              <div className="space-y-2">
-                <div className="relative">
+              <div className="space-y-3">
+                <label className="grid gap-1.5">
+                  <span className="text-[13px] font-semibold text-slate-500">Title</span>
                   <input
                     aria-label="Problem title"
-                    className="!h-10 !w-full !rounded-lg !border !border-slate-300 !bg-white !py-0 !pl-3 !pr-16 text-[14px] font-semibold !text-slate-950 !shadow-none outline-none transition focus:!border-[#3B82F6] focus:!ring-4 focus:!ring-[#3B82F6]/15"
+                    className="!h-10 !w-full !rounded-lg !border !border-slate-300 !bg-white !px-3 !py-0 text-[14px] font-semibold !text-slate-950 !shadow-none outline-none transition focus:!border-[#3B82F6] focus:!ring-4 focus:!ring-[#3B82F6]/15"
+                    placeholder="e.g. Two Sum"
                     value={title}
                     onChange={(event) => handleTitleChange(event.target.value)}
                   />
-                  <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[13px] font-semibold text-slate-500">
-                    {completionPercent}%
-                  </span>
-                </div>
+                  <FieldError message={rootFieldError("title")} />
+                </label>
 
-                <input
-                  aria-label="Problem slug"
-                  className="!h-10 !w-full !rounded-lg !border !border-slate-300 !bg-slate-100 !px-3 !py-0 font-mono text-[13px] !text-slate-700 !shadow-none outline-none transition focus:!border-[#3B82F6] focus:!bg-white focus:!ring-4 focus:!ring-[#3B82F6]/15"
-                  value={slug}
-                  onChange={(event) => {
-                    setSlugWasEdited(true);
-                    setSlug(slugifyTitle(event.target.value));
-                  }}
-                />
-              </div>
-
-              <div className="flex flex-wrap gap-2">
-                {(["JAVA", "SQL"] as ProblemType[]).map((language) => (
-                  <button
-                    className={`rounded-full border px-3 py-1 text-[12px] font-bold transition focus:outline-none focus:ring-2 focus:ring-[#3B82F6]/30 ${
-                      languages.includes(language) ? languageStyles[language].selected : languageStyles[language].unselected
-                    }`}
-                    key={language}
-                    onClick={() => toggleLanguage(language)}
-                    type="button"
-                  >
-                    {language}
-                  </button>
-                ))}
-                {(["EASY", "MEDIUM", "HARD"] as ProblemDifficulty[]).map((level) => (
-                  <button
-                    className={`rounded-full border px-3 py-1 text-[12px] font-bold transition focus:outline-none focus:ring-2 focus:ring-[#3B82F6]/30 ${
-                      difficulty === level ? difficultyStyles[level].selected : difficultyStyles[level].unselected
-                    }`}
-                    key={level}
-                    onClick={() => setDifficulty(level)}
-                    type="button"
-                  >
-                    {displayDifficulty(level)}
-                  </button>
-                ))}
-              </div>
-
-              <div className="flex flex-wrap gap-2">
-                {tags.map((tag) => (
-                  <span
-                    className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2.5 py-1 text-[12px] font-semibold text-slate-700"
-                    key={tag}
-                  >
-                    <Tag size={12} />
-                    {tag}
-                    <button
-                      aria-label={`Remove ${tag}`}
-                      className="rounded-full text-slate-500 hover:text-slate-950 focus:outline-none focus:ring-2 focus:ring-[#3B82F6]/30"
-                      onClick={() => removeTag(tag)}
-                      type="button"
-                    >
-                      <X size={12} />
-                    </button>
-                  </span>
-                ))}
-                <input
-                  aria-label="Add tag"
-                  className="!h-7 !w-36 !rounded-full !border !border-slate-200 !bg-white !px-3 !py-0 text-[12px] !shadow-none outline-none transition placeholder:text-slate-400 focus:!border-[#3B82F6] focus:!ring-4 focus:!ring-[#3B82F6]/15"
-                  list="problem-tag-options"
-                  placeholder="Add tag..."
-                  onKeyDown={(event) => {
-                    if (event.key !== "Enter") {
-                      return;
-                    }
-
-                    event.preventDefault();
-                    const value = event.currentTarget.value.trim();
-                    if (value.length > 0 && !tags.includes(value)) {
-                      setTags((current) => [...current, value]);
-                      event.currentTarget.value = "";
-                    }
-                  }}
-                />
-                <datalist id="problem-tag-options">
-                  <option value="arrays" />
-                  <option value="dynamic-programming" />
-                  <option value="recursion" />
-                  <option value="sql" />
-                </datalist>
-              </div>
-
-              <section className="overflow-hidden rounded-xl border border-slate-200 bg-white">
-                <div className="flex items-end gap-4 border-b border-slate-200 px-3 pt-2">
-                  {(["write", "preview"] as const).map((tab) => (
-                    <button
-                      className={`border-b-2 px-1 pb-2 text-[13px] font-semibold capitalize ${
-                        descriptionTab === tab
-                          ? "border-[#3B82F6] text-[#3B82F6]"
-                          : "border-transparent text-slate-500 hover:text-slate-900"
-                      }`}
-                      key={tab}
-                      onClick={() => setDescriptionTab(tab)}
-                      type="button"
-                    >
-                      {tab}
-                    </button>
-                  ))}
-                </div>
-                <div className="flex flex-wrap items-center gap-1.5 border-b border-slate-200 bg-slate-50 px-3 py-2">
-                  <select
-                    aria-label="Editor font"
-                    className="!h-8 !w-28 !rounded-lg !border !border-slate-300 !bg-white !px-2 !py-0 text-[12px] !shadow-none outline-none focus:!border-[#3B82F6] focus:!ring-2 focus:!ring-[#3B82F6]/15"
-                    defaultValue="Paragraph"
-                  >
-                    <option>Paragraph</option>
-                    <option>Heading</option>
-                    <option>Code</option>
-                  </select>
-                  {toolbarIcons.map((Icon, index) => (
-                    <button
-                      aria-label={`Formatting action ${index + 1}`}
-                      className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-slate-700 hover:bg-white hover:text-slate-950 focus:outline-none focus:ring-2 focus:ring-[#3B82F6]/25"
-                      key={`${Icon.displayName ?? Icon.name}-${index}`}
-                      type="button"
-                    >
-                      <Icon size={16} />
-                    </button>
-                  ))}
-                </div>
-                {descriptionTab === "write" ? (
-                  <textarea
-                    aria-label="Problem description markdown"
-                    className="!min-h-[108px] !w-full resize-none !rounded-none !border-0 !bg-white !p-3 text-[14px] !text-slate-800 !shadow-none outline-none placeholder:text-slate-400 focus:!ring-0"
-                    placeholder="Describe the problem in markdown..."
-                    value={description}
-                    onChange={(event) => setDescription(event.target.value)}
+                <label className="grid gap-1.5">
+                  <span className="text-[13px] font-semibold text-slate-500">Slug</span>
+                  <input
+                    aria-label="Problem slug"
+                    className="!h-10 !w-full !rounded-lg !border !border-slate-300 !bg-slate-100 !px-3 !py-0 font-mono text-[13px] !text-slate-700 !shadow-none outline-none transition placeholder:text-slate-400 focus:!border-[#3B82F6] focus:!bg-white focus:!ring-4 focus:!ring-[#3B82F6]/15"
+                    placeholder="auto-generated-from-title"
+                    value={slug}
+                    onChange={(event) => {
+                      setSlugWasEdited(true);
+                      setSlug(slugifyTitle(event.target.value));
+                    }}
                   />
-                ) : (
-                  <p className="min-h-[108px] p-3 text-[14px] leading-6 text-slate-700">{description}</p>
-                )}
+                  <span className="text-[12px] font-medium text-slate-500">
+                    URL-friendly identifier. Auto-generated from the title — edit only if needed.
+                  </span>
+                  <FieldError message={rootFieldError("slug")} />
+                </label>
+              </div>
+
+              <div className="space-y-2">
+                <div className="flex flex-wrap gap-2">
+                  {(["JAVA", "SQL"] as ProblemType[]).map((language) => (
+                    <button
+                      className={`min-h-11 rounded-full border px-4 py-1 text-[12px] font-bold transition focus:outline-none focus:ring-2 focus:ring-[#3B82F6]/30 md:min-h-0 md:px-3 ${
+                        languages.includes(language) ? languageStyles[language].selected : languageStyles[language].unselected
+                      }`}
+                      key={language}
+                      onClick={() => toggleLanguage(language)}
+                      type="button"
+                    >
+                      {language}
+                    </button>
+                  ))}
+                  {(["EASY", "MEDIUM", "HARD"] as ProblemDifficulty[]).map((level) => (
+                    <button
+                      className={`min-h-11 rounded-full border px-4 py-1 text-[12px] font-bold transition focus:outline-none focus:ring-2 focus:ring-[#3B82F6]/30 md:min-h-0 md:px-3 ${
+                        difficulty === level ? difficultyStyles[level].selected : difficultyStyles[level].unselected
+                      }`}
+                      key={level}
+                      onClick={() => setDifficulty(level)}
+                      type="button"
+                    >
+                      {displayDifficulty(level)}
+                    </button>
+                  ))}
+                </div>
+                <FieldError message={rootFieldError("languages") ?? rootFieldError("difficulty")} />
+                <label className="grid max-w-[14rem] gap-1.5">
+                  <span className="text-[13px] font-semibold text-slate-500">Return type</span>
+                  <FormSelect
+                    ariaLabel="Return type"
+                    className="h-10 text-[13px]"
+                    options={returnTypeOptions}
+                    value={returnType}
+                    onValueChange={setReturnType}
+                  />
+                  <FieldError message={rootFieldError("returnType")} />
+                </label>
+              </div>
+
+              <section className="space-y-2">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-[13px] font-semibold text-slate-500">Tags ({tags.length}/{maxTagCount})</span>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {tags.map((tag) => (
+                    <span
+                      className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2.5 py-1 text-[12px] font-semibold text-slate-700"
+                      key={tag}
+                    >
+                      <Tag size={12} />
+                      {tag}
+                      <button
+                        aria-label={`Remove ${tag}`}
+                        className="inline-flex min-h-8 min-w-8 items-center justify-center rounded-full text-slate-500 hover:text-slate-950 focus:outline-none focus:ring-2 focus:ring-[#3B82F6]/30 md:min-h-0 md:min-w-0"
+                        onClick={() => removeTag(tag)}
+                        type="button"
+                      >
+                        <X size={12} />
+                      </button>
+                    </span>
+                  ))}
+                  <input
+                    aria-label="Add tag"
+                    className="!h-7 !w-36 !rounded-full !border !border-slate-200 !bg-white !px-3 !py-0 text-[12px] !shadow-none outline-none transition placeholder:text-slate-400 disabled:cursor-not-allowed disabled:!bg-slate-100 disabled:!text-slate-400 focus:!border-[#3B82F6] focus:!ring-4 focus:!ring-[#3B82F6]/15"
+                    disabled={tagLimitReached}
+                    list="problem-tag-options"
+                    placeholder="Add tag..."
+                    onKeyDown={(event) => {
+                      if (event.key !== "Enter") {
+                        return;
+                      }
+
+                      event.preventDefault();
+                      const value = event.currentTarget.value.trim();
+                      if (value.length > 0 && !tags.includes(value) && tags.length < maxTagCount) {
+                        setTags((current) => [...current, value]);
+                        event.currentTarget.value = "";
+                      }
+                    }}
+                  />
+                  <datalist id="problem-tag-options">
+                    <option value="arrays" />
+                    <option value="dynamic-programming" />
+                    <option value="recursion" />
+                    <option value="sql" />
+                  </datalist>
+                </div>
+                {tagLimitReached ? (
+                  <p className="text-[12px] font-semibold text-amber-600">Maximum 5 tags reached</p>
+                ) : null}
+                <FieldError message={rootFieldError("tags")} />
               </section>
 
+              <MarkdownEditor
+                activeTab={descriptionTab}
+                onChange={setDescription}
+                onTabChange={setDescriptionTab}
+                value={description}
+              />
+              <FieldError message={rootFieldError("description")} />
+
               <section className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                <div className="space-y-1.5 text-[13px] text-slate-800">
-                  <p className="font-bold text-slate-900">Example 1</p>
-                  <p>
-                    <span className="font-semibold">Input:</span> {examples[0]?.input}
-                  </p>
-                  <p>
-                    <span className="font-semibold">Output:</span> {examples[0]?.output}
-                  </p>
-                  <p>
-                    <span className="font-semibold">Output:</span> {examples[0]?.extraOutput}
-                  </p>
-                  <p>
-                    <span className="font-semibold">Explanation:</span> {examples[0]?.explanation}
-                  </p>
+                <div className="space-y-3">
+                  {examples.length === 0 ? (
+                    <p className="text-[13px] font-semibold text-slate-500">No examples yet.</p>
+                  ) : null}
+                  {examples.map((example, index) => (
+                    <article className="relative rounded-lg border border-slate-200 bg-white p-3" key={example.id}>
+                      <div className="mb-3 flex items-center justify-between gap-3">
+                        <p className="font-bold text-slate-900">Example {index + 1}</p>
+                        <button
+                          aria-label={`Remove example ${index + 1}`}
+                          className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 transition hover:bg-slate-100 hover:text-slate-900 focus:outline-none focus:ring-2 focus:ring-[#3B82F6]/25"
+                          onClick={() => removeExample(index)}
+                          type="button"
+                        >
+                          <X size={15} />
+                        </button>
+                      </div>
+                      <div className="grid gap-3">
+                        <label className="grid gap-1.5">
+                          <span className="text-[12px] font-semibold text-slate-500">Input</span>
+                          <input
+                            aria-label={`Example ${index + 1} input`}
+                            className="!h-9 !rounded-lg !border !border-slate-200 !bg-white !px-3 !py-0 font-mono text-[13px] !shadow-none outline-none focus:!border-[#3B82F6] focus:!ring-2 focus:!ring-[#3B82F6]/15"
+                            placeholder="n = 2"
+                            value={example.input}
+                            onChange={(event) => updateExample(index, "input", event.target.value)}
+                          />
+                          <FieldError message={exampleFieldError(index, "input")} />
+                        </label>
+                        <label className="grid gap-1.5">
+                          <span className="text-[12px] font-semibold text-slate-500">Output</span>
+                          <input
+                            aria-label={`Example ${index + 1} output`}
+                            className="!h-9 !rounded-lg !border !border-slate-200 !bg-white !px-3 !py-0 font-mono text-[13px] !shadow-none outline-none focus:!border-[#3B82F6] focus:!ring-2 focus:!ring-[#3B82F6]/15"
+                            placeholder="2"
+                            value={example.output}
+                            onChange={(event) => updateExample(index, "output", event.target.value)}
+                          />
+                          <FieldError message={exampleFieldError(index, "output")} />
+                        </label>
+                        <label className="grid gap-1.5">
+                          <span className="text-[12px] font-semibold text-slate-500">Explanation</span>
+                          <textarea
+                            aria-label={`Example ${index + 1} explanation`}
+                            className="!min-h-[72px] !rounded-lg !border !border-slate-200 !bg-white !px-3 !py-2 text-[13px] !shadow-none outline-none focus:!border-[#3B82F6] focus:!ring-2 focus:!ring-[#3B82F6]/15"
+                            placeholder="Explain why the output is correct."
+                            value={example.explanation}
+                            onChange={(event) => updateExample(index, "explanation", event.target.value)}
+                          />
+                        </label>
+                      </div>
+                    </article>
+                  ))}
                 </div>
                 <div className="mt-3 flex items-center justify-between gap-3">
                   <button
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-[13px] font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-[#3B82F6]/25"
+                    className="inline-flex min-h-11 items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-[13px] font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-[#3B82F6]/25 md:min-h-0"
                     onClick={addExample}
                     type="button"
                   >
@@ -1373,19 +2371,21 @@ function EditProblemDrawer({ onClose }: EditProblemDrawerProps) {
                     1 &lt;= n &lt;= 45
                   </span>
                 </div>
+                <FieldError message={rootFieldError("examples")} />
               </section>
 
               <CodeEditorCard
                 code={starterCode}
-                language="JAVA"
+                language={editorLanguage}
                 onChange={setStarterCode}
-                title="JAVA"
+                title={editorLanguage}
                 titleIcon={null}
               />
+              <FieldError message={rootFieldError("starterCode")} />
 
-              <section className="overflow-hidden rounded-xl border border-slate-800 bg-slate-950 text-slate-100">
+              <section className="overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--bg-card)] text-[var(--text-primary)]">
                 <button
-                  className="flex w-full items-center justify-between border-b border-slate-800 bg-slate-900 px-3 py-2 text-left text-[13px] font-semibold text-slate-200"
+                  className="flex min-h-11 w-full items-center justify-between border-b border-[var(--border)] bg-[var(--bg-elevated)] px-3 py-2 text-left text-[13px] font-semibold text-[var(--text-primary)]"
                   onClick={() => setReferenceExpanded((current) => !current)}
                   type="button"
                 >
@@ -1399,13 +2399,13 @@ function EditProblemDrawer({ onClose }: EditProblemDrawerProps) {
                   </span>
                 </button>
                 {referenceExpanded ? (
-                  <div className="border-t border-slate-800">
+                  <div className="border-t border-[var(--border)]">
                     <CodeEditorCard
                       code={referenceSolution}
                       embedded
-                      language="JAVA"
+                      language={editorLanguage}
                       onChange={setReferenceSolution}
-                      title="JAVA"
+                      title={editorLanguage}
                       titleIcon={null}
                     />
                   </div>
@@ -1422,139 +2422,127 @@ function EditProblemDrawer({ onClose }: EditProblemDrawerProps) {
                     </tr>
                   </thead>
                   <tbody>
-                    {testCases.map((testCase, index) => (
-                      <tr className="border-b border-slate-100 last:border-0" key={index}>
-                        <td className="px-3 py-2">
-                          <input
-                            aria-label={`Test case ${index + 1} input`}
-                            className="!h-8 !w-full !rounded-lg !border !border-slate-200 !bg-white !px-2 !py-0 font-mono text-[13px] !shadow-none outline-none focus:!border-[#3B82F6] focus:!ring-2 focus:!ring-[#3B82F6]/15"
-                            value={testCase.input}
-                            onChange={(event) => updateTestCase(index, "input", event.target.value)}
-                          />
-                        </td>
-                        <td className="px-3 py-2">
-                          <input
-                            aria-label={`Test case ${index + 1} expected output`}
-                            className="!h-8 !w-full !rounded-lg !border !border-slate-200 !bg-white !px-2 !py-0 font-mono text-[13px] !shadow-none outline-none focus:!border-[#3B82F6] focus:!ring-2 focus:!ring-[#3B82F6]/15"
-                            value={testCase.expectedOutput}
-                            onChange={(event) => updateTestCase(index, "expectedOutput", event.target.value)}
-                          />
-                        </td>
-                        <td className="px-3 py-2 text-right">
-                          <button
-                            aria-label={`Toggle hidden for test case ${index + 1}`}
-                            className={`relative inline-flex h-5 w-9 rounded-full transition focus:outline-none focus:ring-2 focus:ring-[#3B82F6]/25 ${
-                              testCase.hidden ? "bg-emerald-500" : "bg-slate-300"
-                            }`}
-                            onClick={() => updateTestCase(index, "hidden", !testCase.hidden)}
-                            type="button"
-                          >
-                            <span
-                              className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition ${
-                                testCase.hidden ? "left-[18px]" : "left-0.5"
+                    {testCases.map((testCase, index) => {
+                      const inputError = testCaseFieldError(index, "input");
+                      const expectedError = testCaseFieldError(index, "expectedOutput");
+
+                      return (
+                        <tr className="border-b border-slate-100 align-top last:border-0" key={index}>
+                          <td className="px-3 py-2">
+                            <div className="space-y-1">
+                              <div className="grid gap-1.5 sm:grid-cols-[6.5rem_minmax(0,1fr)]">
+                                <FormSelect
+                                  ariaLabel={`Test case ${index + 1} input type`}
+                                  className="h-8 text-[12px]"
+                                  options={returnTypeOptions}
+                                  value={testCase.inputType}
+                                  onValueChange={(value) => updateTestCase(index, "inputType", value)}
+                                />
+                                <input
+                                  aria-label={`Test case ${index + 1} input`}
+                                  className={`!h-8 !w-full !rounded-lg !border !bg-white !px-2 !py-0 font-mono text-[13px] !shadow-none outline-none focus:!border-[#3B82F6] focus:!ring-2 focus:!ring-[#3B82F6]/15 ${
+                                    inputError ? "!border-red-300 focus:!border-red-400 focus:!ring-red-100" : "!border-slate-200"
+                                  }`}
+                                  value={testCase.input}
+                                  onChange={(event) => updateTestCase(index, "input", event.target.value)}
+                                />
+                              </div>
+                              {inputError ? <p className="text-[11px] font-semibold text-red-600">{inputError}</p> : null}
+                            </div>
+                          </td>
+                          <td className="px-3 py-2">
+                            <div className="space-y-1">
+                              <div className="grid gap-1.5 sm:grid-cols-[6.5rem_minmax(0,1fr)]">
+                                <FormSelect
+                                  ariaLabel={`Test case ${index + 1} expected output type`}
+                                  className="h-8 text-[12px]"
+                                  disabled
+                                  options={returnTypeOptions}
+                                  value={returnType}
+                                  onValueChange={() => undefined}
+                                />
+                                <input
+                                  aria-label={`Test case ${index + 1} expected output`}
+                                  className={`!h-8 !w-full !rounded-lg !border !bg-white !px-2 !py-0 font-mono text-[13px] !shadow-none outline-none focus:!border-[#3B82F6] focus:!ring-2 focus:!ring-[#3B82F6]/15 ${
+                                    expectedError ? "!border-red-300 focus:!border-red-400 focus:!ring-red-100" : "!border-slate-200"
+                                  }`}
+                                  value={testCase.expectedOutput}
+                                  onChange={(event) => updateTestCase(index, "expectedOutput", event.target.value)}
+                                />
+                              </div>
+                              {expectedError ? <p className="text-[11px] font-semibold text-red-600">{expectedError}</p> : null}
+                            </div>
+                          </td>
+                          <td className="px-3 py-2 text-right">
+                            <button
+                              aria-label={`Toggle hidden for test case ${index + 1}`}
+                              className={`relative inline-flex h-8 w-12 rounded-full transition focus:outline-none focus:ring-2 focus:ring-[#3B82F6]/25 md:h-5 md:w-9 ${
+                                testCase.hidden ? "bg-emerald-500" : "bg-slate-300"
                               }`}
-                            />
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
+                              onClick={() => updateTestCase(index, "hidden", !testCase.hidden)}
+                              type="button"
+                            >
+                              <span
+                                className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition ${
+                                  testCase.hidden ? "left-7 md:left-[18px]" : "left-0.5"
+                                }`}
+                              />
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
                 <div className="border-t border-slate-100 p-3">
                   <button
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-[13px] font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-[#3B82F6]/25"
+                    className="inline-flex min-h-11 items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-[13px] font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-[#3B82F6]/25 md:min-h-0"
                     onClick={addTestCase}
                     type="button"
                   >
                     <Plus size={14} /> Add test case
                   </button>
+                  <FieldError message={rootFieldError("testCases")} />
                 </div>
               </section>
             </div>
           </main>
 
-          <aside className="min-h-0 min-w-0 overflow-y-auto overflow-x-hidden bg-slate-50 px-4 py-4">
+          <aside className="hidden min-w-0 bg-[var(--bg-elevated)] px-4 py-4 md:block md:px-5 md:py-5">
             <div className="sticky top-4 min-w-0 space-y-4">
-              <h3 className="text-[18px] font-bold tracking-[-0.01em] text-slate-950">Live Preview</h3>
-              <section className="min-w-0 overflow-hidden rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
-                <div className="flex items-start justify-between gap-3">
-                  <h4 className="text-[16px] font-bold text-slate-950">{title || "Untitled Problem"}</h4>
-                  <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-cyan-100 px-2 py-1 text-[11px] font-bold text-cyan-700">
-                    <Clock3 size={12} />
-                  </span>
-                </div>
-                <div className="mt-2 flex flex-wrap gap-2">
-                  <span className={`rounded-full border px-2.5 py-1 text-[12px] font-bold ${difficultyStyles.EASY.preview}`}>
-                    Easy
-                  </span>
-                  <span className="rounded-full border border-[#F97316] bg-[#F97316] px-2.5 py-1 text-[12px] font-bold text-white">
-                    JAVA
-                  </span>
-                  <span className="inline-flex items-center gap-1 rounded-full border border-red-200 bg-red-50 px-2.5 py-1 text-[12px] font-bold text-red-700">
-                    <span className="h-1.5 w-1.5 rounded-full bg-red-500" />
-                    Hard
-                  </span>
-                </div>
-                <p className="mt-3 line-clamp-2 text-[14px] leading-5 text-slate-700">
-                  Count how many distinct ways exist to reach the top, ccd dert from each tere.
-                </p>
-              </section>
-
-              <dl className="space-y-1.5 text-[14px]">
-                {[
-                  ["Created", "Mar 10, 2026"],
-                  ["Last edited", "Apr 22, 2026"],
-                  ["Submissions", "1,204"],
-                  ["Author", "You"],
-                ].map(([label, value]) => (
-                  <div className="flex gap-1" key={label}>
-                    <dt className="font-semibold text-slate-700">{label}:</dt>
-                    <dd className="text-slate-950">{value}</dd>
-                  </div>
-                ))}
-              </dl>
-
-              <div className="space-y-2.5">
-                {readinessItems.map((item) => (
-                  <div className="flex items-center gap-2 text-[14px] font-semibold text-slate-800" key={item.label}>
-                    {item.complete ? (
-                      <Check className="text-emerald-600" size={18} strokeWidth={2.5} />
-                    ) : (
-                      <Circle className="text-slate-400" size={17} />
-                    )}
-                    {item.label}
-                  </div>
-                ))}
-              </div>
+              <h3 className="text-[18px] font-bold tracking-[-0.01em] text-[var(--text-primary)]">Live Preview</h3>
+              {livePreviewContent}
             </div>
           </aside>
         </div>
 
-        <footer className="flex min-h-[60px] items-center justify-between gap-4 border-t border-slate-200 bg-white px-5 py-3">
+        <footer className="flex min-h-[60px] flex-col items-stretch justify-between gap-3 border-t border-[var(--border)] bg-[var(--bg-card)] px-4 py-3 md:flex-row md:items-center md:px-5">
           <div className="inline-flex items-center gap-2 text-[14px] font-semibold text-slate-700">
             <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-[#3B82F6] text-white">
               <CheckCircle2 size={14} />
             </span>
             <span className="text-slate-500">{autosaveText}</span>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex w-full flex-col items-stretch gap-2 md:w-auto md:flex-row md:items-center">
             <button
-              className="rounded-lg px-3 py-2 text-[14px] font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-slate-900 focus:outline-none focus:ring-2 focus:ring-[#3B82F6]/25"
+              className="order-3 min-h-11 rounded-lg px-3 py-2 text-[14px] font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-slate-900 focus:outline-none focus:ring-2 focus:ring-[#3B82F6]/25 md:order-1 md:min-h-0"
               type="button"
             >
               Discard
             </button>
             <button
-              className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-[14px] font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-[#3B82F6]/25"
+              className="order-2 min-h-11 rounded-lg border border-slate-300 bg-white px-4 py-2 text-[14px] font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-[#3B82F6]/25 md:min-h-0"
               type="button"
             >
               Save as draft
             </button>
             <button
-              className="rounded-lg bg-[#3B82F6] px-4 py-2 text-[14px] font-bold text-white shadow-sm transition hover:bg-blue-600 focus:outline-none focus:ring-4 focus:ring-[#3B82F6]/25"
+              className="order-1 min-h-11 rounded-lg bg-[#3B82F6] px-4 py-2 text-[14px] font-bold text-white shadow-sm transition hover:bg-blue-600 focus:outline-none focus:ring-4 focus:ring-[#3B82F6]/25 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500 md:order-3 md:min-h-0"
+              disabled={!isFormValid}
+              title={submitDisabledReason}
               type="button"
             >
-              Submit for review
+              {primaryActionLabel}
             </button>
           </div>
         </footer>
@@ -1566,20 +2554,22 @@ function EditProblemDrawer({ onClose }: EditProblemDrawerProps) {
 type CodeEditorCardProps = {
   code: string;
   embedded?: boolean;
-  language: string;
+  language: ProblemType;
   onChange: (value: string) => void;
   title: string;
   titleIcon: ReactNode;
 };
 
 function CodeEditorCard({ code, embedded = false, language, onChange, title, titleIcon }: CodeEditorCardProps) {
-  const codeLines = code.split("\n");
+  const { theme } = useAppTheme();
 
   return (
-    <section className={`${embedded ? "rounded-none border-0" : "overflow-hidden rounded-xl border border-slate-800"} bg-slate-950 text-slate-100`}>
+    <section
+      className={`${embedded ? "rounded-none border-0" : "overflow-hidden rounded-xl border border-[var(--border)]"} bg-[var(--bg-card)] text-[var(--text-primary)]`}
+    >
       {!embedded ? (
-        <div className="flex items-center justify-between border-b border-slate-800 bg-slate-900 px-3 py-2">
-          <span className="inline-flex items-center gap-2 rounded-md bg-slate-800 px-2 py-1 text-[12px] font-bold text-slate-100">
+        <div className="flex items-center justify-between border-b border-[var(--border)] bg-[var(--bg-elevated)] px-3 py-2">
+          <span className="inline-flex items-center gap-2 rounded-md border border-[var(--border)] bg-[var(--bg-card)] px-2 py-1 text-[12px] font-bold text-[var(--text-primary)]">
             {titleIcon}
             {title}
           </span>
@@ -1587,8 +2577,13 @@ function CodeEditorCard({ code, embedded = false, language, onChange, title, tit
             {[Copy, Expand, Settings, ChevronDown].map((Icon, index) => (
               <button
                 aria-label={`Code editor control ${index + 1}`}
-                className="inline-flex h-7 w-7 items-center justify-center rounded-md text-slate-400 hover:bg-slate-800 hover:text-white focus:outline-none focus:ring-2 focus:ring-[#3B82F6]/35"
+                className="inline-flex h-7 w-7 items-center justify-center rounded-md text-[var(--text-secondary)] hover:bg-[var(--bg-card)] hover:text-[var(--text-primary)] focus:outline-none focus:ring-2 focus:ring-[#3B82F6]/35"
                 key={`${Icon.displayName ?? Icon.name}-${index}`}
+                onClick={() => {
+                  if (Icon === Copy) {
+                    void navigator.clipboard?.writeText(code);
+                  }
+                }}
                 type="button"
               >
                 <Icon size={15} />
@@ -1597,413 +2592,43 @@ function CodeEditorCard({ code, embedded = false, language, onChange, title, tit
           </div>
         </div>
       ) : null}
-      <div className="relative min-h-[112px] py-3 font-mono text-[12px] leading-6" style={{ backgroundColor: "#0B1117" }}>
-        <ol aria-hidden="true">
-          {codeLines.map((line, index) => (
-            <li className="grid grid-cols-[2.25rem_1fr] px-3" key={`${line}-${index}`}>
-              <span className="select-none pr-3 text-right text-slate-500">{index + 1}</span>
-              <code className="whitespace-pre text-slate-200">
-                {line.includes("class") ? (
-                  <>
-                    <span className="text-violet-300">class</span>
-                    {line.replace("class", "")}
-                  </>
-                ) : line.includes("public int") ? (
-                  <>
-                    <span className="text-violet-300">public</span> <span className="text-sky-300">int</span>
-                    {line.replace("public int", "")}
-                  </>
-                ) : (
-                  line
-                )}
-              </code>
-            </li>
-          ))}
-        </ol>
-        <textarea
-          aria-label={`${language} code editor`}
-          className="absolute inset-0 !h-full !min-h-0 !w-full resize-none !rounded-none !border-0 !bg-transparent !px-[3.25rem] !py-3 font-mono text-[12px] leading-6 !text-transparent caret-white !shadow-none outline-none selection:!bg-blue-500/30 focus:!ring-0"
-          spellCheck={false}
-          style={{ background: "transparent" }}
+      <div className={embedded ? "min-h-[170px]" : "min-h-[190px]"} style={{ backgroundColor: "var(--bg-card)" }}>
+        <Editor
+          beforeMount={configureMonacoTheme}
+          height={embedded ? "170px" : "190px"}
+          language={editorLanguageFor(language)}
+          options={{
+            automaticLayout: true,
+            bracketPairColorization: { enabled: true },
+            cursorBlinking: "smooth",
+            fontFamily: "Chakra Petch, SFMono-Regular, monospace",
+            fontLigatures: true,
+            fontSize: 12,
+            lineHeight: 20,
+            lineNumbers: "on",
+            lineNumbersMinChars: 3,
+            matchBrackets: "always",
+            minimap: { enabled: false },
+            overviewRulerBorder: false,
+            overviewRulerLanes: 0,
+            padding: { top: 12, bottom: 12 },
+            quickSuggestions: true,
+            scrollBeyondLastLine: false,
+            scrollbar: {
+              alwaysConsumeMouseWheel: false,
+              horizontalScrollbarSize: 8,
+              verticalScrollbarSize: 8,
+            },
+            smoothScrolling: true,
+            suggestOnTriggerCharacters: true,
+            tabCompletion: "on",
+            wordBasedSuggestions: "currentDocument",
+            wordWrap: "on",
+          }}
+          theme={theme === "dark" ? "juro-author-dark" : "juro-author-light"}
           value={code}
-          onChange={(event) => onChange(event.target.value)}
+          onChange={(value) => onChange(value ?? "")}
         />
-      </div>
-    </section>
-  );
-}
-
-function CreateProblemPage() {
-  const navigate = useNavigate();
-  const [form, setForm] = useState<ProblemRequest>(defaultProblemForm);
-  const [authorSection, setAuthorSection] = useState<AuthorSection>("setup");
-  const [activeExampleIndex, setActiveExampleIndex] = useState(0);
-  const [isSaving, setIsSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  function updateExample(index: number, field: keyof ProblemExample, value: string | number) {
-    setForm((current) => ({
-      ...current,
-      examples: current.examples.map((example, currentIndex) =>
-        currentIndex === index ? { ...example, [field]: value } : example,
-      ),
-    }));
-  }
-
-  function addExample() {
-    let nextIndex = 0;
-    setForm((current) => {
-      nextIndex = current.examples.length;
-      return {
-        ...current,
-        examples: [
-          ...current.examples,
-          {
-            label: `Example ${current.examples.length + 1}`,
-            sortOrder: current.examples.length,
-            inputData: "",
-            expectedOutput: "",
-            explanation: "",
-          },
-        ],
-      };
-    });
-    setActiveExampleIndex(nextIndex);
-  }
-
-  function removeExample(index: number) {
-    let nextCount = 0;
-    setForm((current) => {
-      const examples = current.examples
-        .filter((_, currentIndex) => currentIndex !== index)
-        .map((example, currentIndex) => ({ ...example, sortOrder: currentIndex }));
-      nextCount = examples.length;
-      return {
-        ...current,
-        examples,
-      };
-    });
-    setActiveExampleIndex((current) => Math.max(0, Math.min(current >= index ? current - 1 : current, nextCount - 1)));
-  }
-
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setIsSaving(true);
-    setError(null);
-
-    try {
-      const created = await createProblem({
-        ...form,
-        examples: form.examples.map((example, index) => ({ ...example, sortOrder: index })),
-      });
-      navigate(`/problems/${created.id}`);
-    } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : "Unable to save problem.");
-    } finally {
-      setIsSaving(false);
-    }
-  }
-
-  const typeSpecificHints =
-    form.type === "JAVA"
-      ? {
-          starter: "Define the expected method or class contract for Java solutions.",
-          example:
-            "Keep the examples structured so the future Java judge can map them into executable tests.",
-        }
-      : {
-          starter: "Use starter code for the base SQL skeleton or the schema reminder.",
-          example:
-            "Treat example input as setup SQL and the expected output as the target result set.",
-        };
-
-  const activeExample = form.examples[activeExampleIndex] ?? form.examples[0];
-
-  function sectionButton(section: AuthorSection, label: string) {
-    return (
-      <button
-        className={`workspace-tab${authorSection === section ? " workspace-tab--active" : ""}`}
-        onClick={() => setAuthorSection(section)}
-        type="button"
-      >
-        {label}
-      </button>
-    );
-  }
-
-  return (
-    <section className="viewport-page viewport-page--form">
-      <div className="workspace-shell workspace-shell--author">
-        <ScreenHeader
-          compact
-          description="Build a new Java or SQL exercise with starter code, examples, and reference material."
-          kicker="Problem Authoring"
-          title="Author Problems"
-        />
-
-        {error ? <div className="error-banner">{error}</div> : null}
-
-        <form className="author-layout" onSubmit={handleSubmit}>
-          <aside className="panel author-sidebar">
-            <div className="author-sidebar__preview">
-              <p className="section-kicker">Draft Preview</p>
-              <h2>{form.title.trim() || "Untitled Problem"}</h2>
-              <p>{form.summary.trim() || "Add a short summary to describe what the solver must do."}</p>
-            </div>
-
-            <div className="author-sidebar__meta">
-              <ProblemMetaTags difficulty={form.difficulty} exampleCount={form.examples.length} type={form.type} />
-            </div>
-
-            <div className="author-sidebar__nav">
-              {sectionButton("setup", "Setup")}
-              {sectionButton("prompt", "Prompt")}
-              {sectionButton("judge", "Judge")}
-              {sectionButton("examples", "Examples")}
-            </div>
-
-            <div className="author-sidebar__actions">
-              <button className="button button--primary" disabled={isSaving} type="submit">
-                {isSaving ? "Saving…" : "Create problem"}
-              </button>
-            </div>
-          </aside>
-
-          <section className="panel author-panel">
-            {authorSection === "setup" ? (
-              <div className="author-section">
-                <div className="author-section__header">
-                  <h3>Setup</h3>
-                  <p>Define the identity and scope of the problem.</p>
-                </div>
-
-                <div className="author-setup-grid">
-                  <label className="author-field author-field--wide">
-                    Title
-                    <input
-                      required
-                      value={form.title}
-                      onChange={(event) => setForm((current) => ({ ...current, title: event.target.value }))}
-                    />
-                  </label>
-
-                  <label className="author-field">
-                    Slug
-                    <input
-                      placeholder="optional-custom-slug"
-                      value={form.slug ?? ""}
-                      onChange={(event) => setForm((current) => ({ ...current, slug: event.target.value }))}
-                    />
-                  </label>
-
-                  <label className="author-field">
-                    Type
-                    <select
-                      value={form.type}
-                      onChange={(event) =>
-                        setForm((current) => ({ ...current, type: event.target.value as ProblemType }))
-                      }
-                    >
-                      <option value="JAVA">Java</option>
-                      <option value="SQL">SQL</option>
-                    </select>
-                  </label>
-
-                  <label className="author-field">
-                    Difficulty
-                    <select
-                      value={form.difficulty}
-                      onChange={(event) =>
-                        setForm((current) => ({
-                          ...current,
-                          difficulty: event.target.value as ProblemDifficulty,
-                        }))
-                      }
-                    >
-                      <option value="EASY">Easy</option>
-                      <option value="MEDIUM">Medium</option>
-                      <option value="HARD">Hard</option>
-                    </select>
-                  </label>
-
-                  <label className="author-field author-field--wide">
-                    Summary
-                    <textarea
-                      className="author-textarea author-textarea--summary"
-                      required
-                      maxLength={280}
-                      rows={4}
-                      value={form.summary}
-                      onChange={(event) => setForm((current) => ({ ...current, summary: event.target.value }))}
-                    />
-                  </label>
-                </div>
-              </div>
-            ) : null}
-
-            {authorSection === "prompt" ? (
-              <div className="author-section">
-                <div className="author-section__header">
-                  <h3>Prompt</h3>
-                  <p>Write the main description and the constraints markdown.</p>
-                </div>
-
-                <div className="author-prompt-grid">
-                  <label className="author-field author-field--editor">
-                    Description
-                    <textarea
-                      className="author-textarea author-textarea--editor"
-                      required
-                      rows={14}
-                      value={form.descriptionMarkdown}
-                      onChange={(event) =>
-                        setForm((current) => ({ ...current, descriptionMarkdown: event.target.value }))
-                      }
-                    />
-                  </label>
-
-                  <label className="author-field author-field--editor">
-                    Constraints (Markdown)
-                    <textarea
-                      className="author-textarea author-textarea--editor author-textarea--compact"
-                      rows={12}
-                      value={form.constraintsMarkdown ?? ""}
-                      onChange={(event) =>
-                        setForm((current) => ({ ...current, constraintsMarkdown: event.target.value }))
-                      }
-                    />
-                  </label>
-                </div>
-              </div>
-            ) : null}
-
-            {authorSection === "judge" ? (
-              <div className="author-section">
-                <div className="author-section__header">
-                  <h3>Judge Material</h3>
-                  <p>{typeSpecificHints.starter}</p>
-                </div>
-
-                <div className="author-judge-grid">
-                  <label className="author-field author-field--editor">
-                    Starter code
-                    <textarea
-                      className="author-textarea author-textarea--editor"
-                      rows={12}
-                      value={form.starterCode ?? ""}
-                      onChange={(event) => setForm((current) => ({ ...current, starterCode: event.target.value }))}
-                    />
-                  </label>
-
-                  <label className="author-field author-field--editor">
-                    Reference solution
-                    <textarea
-                      className="author-textarea author-textarea--editor"
-                      rows={12}
-                      value={form.referenceSolution ?? ""}
-                      onChange={(event) =>
-                        setForm((current) => ({ ...current, referenceSolution: event.target.value }))
-                      }
-                    />
-                  </label>
-
-                  <label className="author-field author-field--wide">
-                    Evaluation notes
-                    <textarea
-                      className="author-textarea author-textarea--compact"
-                      rows={4}
-                      value={form.evaluationNotes ?? ""}
-                      onChange={(event) =>
-                        setForm((current) => ({ ...current, evaluationNotes: event.target.value }))
-                      }
-                    />
-                  </label>
-                </div>
-              </div>
-            ) : null}
-
-            {authorSection === "examples" && activeExample ? (
-              <div className="author-section">
-                <div className="author-section__header">
-                  <h3>Examples</h3>
-                  <p>{typeSpecificHints.example}</p>
-                </div>
-
-                <div className="author-examples__toolbar">
-                  <div className="author-examples__tabs">
-                    {form.examples.map((example, index) => (
-                      <button
-                        className={`workspace-tab${index === activeExampleIndex ? " workspace-tab--active" : ""}`}
-                        key={`${example.label}-${index}`}
-                        onClick={() => setActiveExampleIndex(index)}
-                        type="button"
-                      >
-                        {example.label || `Example ${index + 1}`}
-                      </button>
-                    ))}
-                  </div>
-
-                  <div className="author-examples__actions">
-                    <button className="button button--ghost button--sm" onClick={addExample} type="button">
-                      Add example
-                    </button>
-                    {form.examples.length > 1 ? (
-                      <button
-                        className="button button--ghost button--sm"
-                        onClick={() => removeExample(activeExampleIndex)}
-                        type="button"
-                      >
-                        Remove
-                      </button>
-                    ) : null}
-                  </div>
-                </div>
-
-                <div className="author-example-layout">
-                  <label className="author-field">
-                    Label
-                    <input
-                      value={activeExample.label}
-                      onChange={(event) => updateExample(activeExampleIndex, "label", event.target.value)}
-                    />
-                  </label>
-
-                  <label className="author-field">
-                    Explanation
-                    <textarea
-                      className="author-textarea author-textarea--compact"
-                      rows={4}
-                      value={activeExample.explanation ?? ""}
-                      onChange={(event) => updateExample(activeExampleIndex, "explanation", event.target.value)}
-                    />
-                  </label>
-
-                  <label className="author-field author-field--editor">
-                    Input
-                    <textarea
-                      className="author-textarea author-textarea--editor author-textarea--code"
-                      required
-                      rows={12}
-                      value={activeExample.inputData}
-                      onChange={(event) => updateExample(activeExampleIndex, "inputData", event.target.value)}
-                    />
-                  </label>
-
-                  <label className="author-field author-field--editor">
-                    Expected output
-                    <textarea
-                      className="author-textarea author-textarea--editor author-textarea--code"
-                      required
-                      rows={12}
-                      value={activeExample.expectedOutput}
-                      onChange={(event) => updateExample(activeExampleIndex, "expectedOutput", event.target.value)}
-                    />
-                  </label>
-                </div>
-              </div>
-            ) : null}
-          </section>
-        </form>
       </div>
     </section>
   );
@@ -2011,12 +2636,14 @@ function CreateProblemPage() {
 
 function ProblemDetailPage() {
   const { problemId = "" } = useParams();
+  const { theme } = useAppTheme();
   const [documentTab, setDocumentTab] = useState<DocumentTab>("description");
   const [resultPanelMode, setResultPanelMode] = useState<ResultPanelMode>("testcase");
   const [problem, setProblem] = useState<ProblemDetail | null>(null);
   const [testResult, setTestResult] = useState<Submission | null>(null);
   const [selectedCaseIndex, setSelectedCaseIndex] = useState(0);
   const [editorValue, setEditorValue] = useState("");
+  const [workspaceLanguage, setWorkspaceLanguage] = useState<ProblemType>("JAVA");
   const [isLoading, setIsLoading] = useState(true);
   const [isTesting, setIsTesting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -2034,6 +2661,7 @@ function ProblemDetailPage() {
           setResultPanelMode("testcase");
           setSelectedCaseIndex(0);
           setEditorValue(problemResponse.starterCode ?? "");
+          setWorkspaceLanguage(problemResponse.type);
           setError(null);
         }
       } catch (loadError) {
@@ -2064,7 +2692,7 @@ function ProblemDetailPage() {
 
     try {
       const created = await createSubmission(problem.id, {
-        submittedLanguage: problem.type,
+        submittedLanguage: workspaceLanguage,
         sourceCode: editorValue,
       });
       setTestResult(created);
@@ -2096,20 +2724,52 @@ function ProblemDetailPage() {
 
   const title = problem?.title ?? "Problem Workspace";
   const description = problem?.summary ?? "Review the prompt and test a solution in the editor.";
+  const workspaceStatus = problem ? statusForProblem(problem) : "NOT_STARTED";
+  const constraintItems = constraintItemsFromMarkdown(problem?.constraintsMarkdown);
 
   return (
     <section className="viewport-page viewport-page--workspace">
       <div className="workspace-shell workspace-shell--detail">
-        <ScreenHeader compact description={description} kicker="Problem Workspace" title={title} />
+        <header className="workspace-detail-header glass-panel">
+          <div className="problem-bank-header__bar">
+            <Link aria-label="Back to Problem Bank" className="icon-button" to="/">
+              ←
+            </Link>
+            <h1>{title}</h1>
+            <div className="problem-bank-header__actions">
+              <ThemeToggleButton />
+              <button aria-label="Settings" className="icon-button" type="button">
+                <Settings size={17} strokeWidth={2.25} />
+              </button>
+            </div>
+          </div>
+          <div className="workspace-detail-header__summary">
+            <p>{description}</p>
+            {problem ? (
+              <div className="workspace-detail-header__pills">
+                <span className={`status-label status-label--${workspaceStatus.toLowerCase().replace("_", "-")}`}>
+                  <span className="status-label__mark" aria-hidden="true">
+                    {statusMeta[workspaceStatus].mark}
+                  </span>
+                  {statusMeta[workspaceStatus].label}
+                </span>
+                <span className={`tag tag--difficulty tag--${problem.difficulty.toLowerCase()}`}>
+                  {displayDifficulty(problem.difficulty)}
+                </span>
+              </div>
+            ) : null}
+          </div>
+        </header>
 
         {isLoading ? <div className="empty-state">Loading problem…</div> : null}
         {error && !problem ? <div className="error-banner">{error}</div> : null}
 
         {!isLoading && problem ? (
-          <div className="workspace-layout">
+          <section className="workspace-frame glass-panel">
+            <div className="workspace-layout">
             <PanelGroup autoSaveId="problem-workspace-horizontal" direction="horizontal">
               <Panel defaultSize={46} minSize={30}>
-                <section className="workspace-pane glass-panel">
+                <section className="workspace-pane workspace-card">
                   <div className="workspace-pane__header">
                     <div className="workspace-tabs">
                       <button
@@ -2134,11 +2794,6 @@ function ProblemDetailPage() {
                         Notes
                       </button>
                     </div>
-                    <ProblemMetaTags
-                      difficulty={problem.difficulty}
-                      exampleCount={problem.examples.length}
-                      type={problem.type}
-                    />
                   </div>
 
                   <div className="workspace-pane__scroll">
@@ -2165,7 +2820,17 @@ function ProblemDetailPage() {
                         {problem.constraintsMarkdown ? (
                           <section className="content-block">
                             <h3>Constraints</h3>
-                            <MarkdownBlock content={problem.constraintsMarkdown} />
+                            {constraintItems.length > 0 ? (
+                              <div className="constraint-list">
+                                {constraintItems.map((constraint) => (
+                                  <code className="constraint-pill" key={constraint}>
+                                    {constraint}
+                                  </code>
+                                ))}
+                              </div>
+                            ) : (
+                              <MarkdownBlock content={problem.constraintsMarkdown} />
+                            )}
                           </section>
                         ) : null}
                       </div>
@@ -2222,15 +2887,27 @@ function ProblemDetailPage() {
               <Panel defaultSize={54} minSize={30}>
                 <PanelGroup autoSaveId="problem-workspace-vertical" direction="vertical">
                   <Panel defaultSize={74} minSize={45}>
-                    <section className="workspace-pane glass-panel">
+                    <section className="workspace-pane workspace-card">
                       <div className="workspace-pane__header">
                         <div>
-                          <p className="section-kicker">Code Editor</p>
                           <h2 className="workspace-pane__title">Write your solution</h2>
                         </div>
 
                         <div className="editor-toolbar">
-                          <span className="editor-toolbar__language">{problem.type}</span>
+                          <div className="workspace-language-switch" aria-label="Language">
+                            {(["JAVA", "SQL"] as ProblemType[]).map((language) => (
+                              <button
+                                className={`workspace-language-switch__item${
+                                  workspaceLanguage === language ? " workspace-language-switch__item--active" : ""
+                                }`}
+                                key={language}
+                                onClick={() => setWorkspaceLanguage(language)}
+                                type="button"
+                              >
+                                {language}
+                              </button>
+                            ))}
+                          </div>
                           <button className="button button--primary button--sm" onClick={handleTestCode} type="button">
                             {isTesting ? "Testing…" : "Test Code"}
                           </button>
@@ -2241,7 +2918,7 @@ function ProblemDetailPage() {
                         <Editor
                           beforeMount={configureMonacoTheme}
                           height="100%"
-                          language={editorLanguageFor(problem.type)}
+                          language={editorLanguageFor(workspaceLanguage)}
                           onChange={(value) => setEditorValue(value ?? "")}
                           options={{
                             automaticLayout: true,
@@ -2262,7 +2939,7 @@ function ProblemDetailPage() {
                             smoothScrolling: true,
                             wordWrap: "on",
                           }}
-                          theme="juro-liquid"
+                          theme={theme === "dark" ? "juro-author-dark" : "juro-author-light"}
                           value={editorValue}
                         />
                       </div>
@@ -2272,10 +2949,9 @@ function ProblemDetailPage() {
                   <PanelResizeHandle className="resize-handle resize-handle--horizontal" />
 
                   <Panel defaultSize={26} minSize={20}>
-                    <section className="workspace-pane glass-panel">
+                    <section className="workspace-pane workspace-card">
                       <div className="workspace-pane__header">
                         <div>
-                          <p className="section-kicker">Results</p>
                           <h2 className="workspace-pane__title">Test Results</h2>
                         </div>
                         <div className="result-mode-switch">
@@ -2444,6 +3120,7 @@ function ProblemDetailPage() {
               </Panel>
             </PanelGroup>
           </div>
+          </section>
         ) : null}
       </div>
     </section>

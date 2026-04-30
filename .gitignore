@@ -4,4 +4,5 @@
 
 backend/target/
 frontend/dist/
+frontend/.npm-cache/
 frontend/node_modules/
