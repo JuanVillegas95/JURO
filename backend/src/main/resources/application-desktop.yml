@@ -1,0 +1,14 @@
+spring:
+  datasource:
+    url: "jdbc:h2:file:${JURO_DATA_DIR:${user.home}/.juro}/juro;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH"
+    username: juro
+    password: juro
+    driver-class-name: org.h2.Driver
+  jpa:
+    database-platform: org.hibernate.dialect.H2Dialect
+  flyway:
+    locations: classpath:db/desktop-migration
+
+app:
+  local:
+    settings-path: "${JURO_DATA_DIR:${user.home}/.juro}/settings.json"

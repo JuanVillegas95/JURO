@@ -6,7 +6,14 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "backend:package": "mkdir -p ../.tmp ../.m2repo && cd ../backend && MAVEN_OPTS=-Djava.io.tmpdir=../.tmp TMPDIR=../.tmp mvn -s ../.mvn/public-settings.xml -Dmaven.repo.local=../.m2repo clean -DskipTests package",
+    "dev:tauri": "npm run backend:package && VITE_API_BASE_URL=http://127.0.0.1:18191 vite --host 127.0.0.1 --port 5180",
+    "build:tauri": "npm run backend:package && tsc -b && VITE_API_BASE_URL=http://127.0.0.1:18191 vite build",
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build",
+    "tauri:build:manjaro": "tauri build --bundles appimage"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
@@ -18,13 +25,13 @@
     "react-dom": "^19.0.0",
     "react-hook-form": "^7.74.0",
     "react-markdown": "^10.1.0",
-    "react-resizable-panels": "^2.1.9",
     "react-router-dom": "^7.6.0",
     "remark-gfm": "^4.0.1",
     "tailwindcss": "^4.2.4",
     "zod": "^4.4.1"
   },
   "devDependencies": {
+    "@tauri-apps/cli": "^2.11.0",
     "@types/node": "^22.15.18",
     "@types/react": "^19.0.10",
     "@types/react-dom": "^19.0.6",
