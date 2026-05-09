@@ -44,6 +44,54 @@ To build from source:
 - Xcode Command Line Tools on macOS, or Tauri Linux system dependencies on Manjaro/Linux
 - Java 17 or newer
 
+## Install Built App
+
+JURO currently expects Java 17+ and VS Code to be installed on the user machine. The `code` command must also be available on `PATH` so JURO can open generated problem workspaces.
+
+### Manjaro / Linux
+
+Install runtime prerequisites:
+
+```bash
+sudo pacman -S jdk17-openjdk
+```
+
+Install VS Code from your preferred Manjaro source, then enable the `code` command from VS Code's command-line setup if it is not already on `PATH`.
+
+Install the JURO AppImage:
+
+1. Download the `JURO-*.AppImage` build artifact.
+2. Move it somewhere stable, such as `~/Applications/JURO.AppImage`.
+3. Make it executable.
+
+```bash
+mkdir -p ~/Applications
+mv ~/Downloads/JURO-*.AppImage ~/Applications/JURO.AppImage
+chmod +x ~/Applications/JURO.AppImage
+~/Applications/JURO.AppImage
+```
+
+Optional AI knowledge checks require a local AI provider such as Ollama or Codex Adapter. Configure the provider in JURO Settings after first launch.
+
+### macOS
+
+Install runtime prerequisites:
+
+```bash
+brew install openjdk@17
+```
+
+Install VS Code and make sure the `code` command is available from the shell. In VS Code, run `Shell Command: Install 'code' command in PATH` from the Command Palette if needed.
+
+Install the JURO app:
+
+1. Download the macOS `JURO.app` build artifact or `.dmg` release package.
+2. If using a `.dmg`, open it and drag `JURO.app` into `/Applications`.
+3. If using a raw `.app` bundle, move it into `/Applications`.
+4. Open JURO from Applications.
+
+If macOS Gatekeeper blocks an unsigned local build, open System Settings, go to Privacy & Security, and allow JURO from there. Production releases should be signed and notarized before distribution.
+
 ## App Workflow
 
 1. Open JURO.
