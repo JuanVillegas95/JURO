@@ -9,7 +9,7 @@ use std::{
 
 use tauri::{path::BaseDirectory, Manager, WindowEvent};
 
-const BACKEND_PORT: u16 = 18191;
+const DEFAULT_BACKEND_PORT: u16 = 18191;
 const BACKEND_JAR: &str = "backend/juro-backend.jar";
 
 struct BackendProcess(Mutex<Option<Child>>);
@@ -32,7 +32,8 @@ pub fn run() {
 }
 
 fn start_backend(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> {
-    if is_backend_port_open() {
+    let backend_port = backend_port();
+    if is_backend_port_open(backend_port) {
         return Ok(());
     }
 
@@ -59,7 +60,7 @@ fn start_backend(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error
         .arg(jar_path)
         .env("PATH", desktop_path())
         .env("SPRING_PROFILES_ACTIVE", "desktop")
-        .env("SERVER_PORT", BACKEND_PORT.to_string())
+        .env("SERVER_PORT", backend_port.to_string())
         .env("JURO_DATA_DIR", &data_dir)
         .env(
             "APP_CORS_ALLOWED_ORIGIN_PATTERNS",
@@ -77,7 +78,7 @@ fn start_backend(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error
     let state = app.state::<BackendProcess>();
     *state.0.lock().expect("backend process lock poisoned") = Some(child);
 
-    wait_for_backend()?;
+    wait_for_backend(backend_port)?;
 
     Ok(())
 }
@@ -91,20 +92,27 @@ fn stop_backend(app: &tauri::AppHandle) {
     }
 }
 
-fn is_backend_port_open() -> bool {
-    let address = SocketAddr::from(([127, 0, 0, 1], BACKEND_PORT));
+fn is_backend_port_open(port: u16) -> bool {
+    let address = SocketAddr::from(([127, 0, 0, 1], port));
     TcpStream::connect_timeout(&address, Duration::from_millis(250)).is_ok()
 }
 
-fn wait_for_backend() -> Result<(), Box<dyn std::error::Error>> {
+fn wait_for_backend(port: u16) -> Result<(), Box<dyn std::error::Error>> {
     for _ in 0..60 {
-        if is_backend_port_open() {
+        if is_backend_port_open(port) {
             return Ok(());
         }
         std::thread::sleep(Duration::from_millis(250));
     }
 
-    Err("JURO backend did not become ready on port 18191 within 15 seconds.".into())
+    Err(format!("JURO backend did not become ready on port {port} within 15 seconds.").into())
+}
+
+fn backend_port() -> u16 {
+    std::env::var("JURO_BACKEND_PORT")
+        .ok()
+        .and_then(|value| value.parse::<u16>().ok())
+        .unwrap_or(DEFAULT_BACKEND_PORT)
 }
 
 fn backend_jar_path(app: &tauri::AppHandle) -> Result<PathBuf, Box<dyn std::error::Error>> {

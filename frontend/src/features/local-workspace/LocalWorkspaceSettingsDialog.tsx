@@ -7,8 +7,11 @@ import {
   getAiStatus,
   getLocalSettings,
   getLocalToolingStatus,
+  getProblemBankFileSyncStatus,
+  importProblemBankSyncFile,
   importProblemBank,
   saveLocalSettings,
+  writeProblemBankSyncFile,
 } from "../../api";
 import type {
   AiProvider,
@@ -17,34 +20,44 @@ import type {
   LocalToolingStatus,
   LocalWorkspaceSettings,
   ProblemBankExport,
+  ProblemBankFileSyncStatus,
   ReviewFrequency,
+  TranscriptionProvider,
 } from "../../types";
 
 const editorOptions = [
   { label: "VS Code", value: "VS_CODE" },
+  { label: "Neovim", value: "NVIM" },
 ] as const;
 
 const transcriptionOptions = [
   { label: "Browser speech", value: "BROWSER" },
   { label: "Manual text", value: "MANUAL" },
-  { label: "Whisper service", value: "WHISPER" },
 ] as const;
 
 const aiProviderOptions = [
   { label: "Ollama", value: "OLLAMA" },
   { label: "Codex Adapter", value: "CODEX_ADAPTER" },
+  { label: "Anthropic Claude", value: "ANTHROPIC" },
 ] as const;
 
 const aiProviderDefaults = {
   OLLAMA: {
     baseUrl: "http://localhost:11434",
     model: "llama3.1",
+    apiKey: "",
   },
   CODEX_ADAPTER: {
     baseUrl: "http://127.0.0.1:11435/v1/",
     model: "gpt-5.4",
+    apiKey: "",
   },
-} satisfies Record<AiProvider, { baseUrl: string; model: string }>;
+  ANTHROPIC: {
+    baseUrl: "https://api.anthropic.com",
+    model: "claude-sonnet-4-20250514",
+    apiKey: "",
+  },
+} satisfies Record<AiProvider, { baseUrl: string; model: string; apiKey: string }>;
 
 const reviewFrequencyOptions = [
   { label: "Less often", value: "LESS_OFTEN" },
@@ -92,22 +105,29 @@ export function LocalWorkspaceSettingsDialog({
     aiProvider: "OLLAMA",
     aiBaseUrl: aiProviderDefaults.OLLAMA.baseUrl,
     aiModel: aiProviderDefaults.OLLAMA.model,
+    aiApiKey: aiProviderDefaults.OLLAMA.apiKey,
     ollamaBaseUrl: aiProviderDefaults.OLLAMA.baseUrl,
     ollamaModel: aiProviderDefaults.OLLAMA.model,
     transcriptionProvider: "BROWSER",
     ...schedulingDefaults,
+    problemBankSyncEnabled: false,
+    problemBankSyncFilePath: "",
   });
-  const [aiProviderDrafts, setAiProviderDrafts] = useState<Record<AiProvider, { baseUrl: string; model: string }>>({
+  const [aiProviderDrafts, setAiProviderDrafts] = useState<Record<AiProvider, { baseUrl: string; model: string; apiKey: string }>>({
     OLLAMA: aiProviderDefaults.OLLAMA,
     CODEX_ADAPTER: aiProviderDefaults.CODEX_ADAPTER,
+    ANTHROPIC: aiProviderDefaults.ANTHROPIC,
   });
   const [toolingStatus, setToolingStatus] = useState<LocalToolingStatus | null>(null);
   const [aiStatus, setAiStatus] = useState<LocalAiStatus | null>(null);
+  const [fileSyncStatus, setFileSyncStatus] = useState<ProblemBankFileSyncStatus | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [isTestingAi, setIsTestingAi] = useState(false);
   const [isExportingProblemBank, setIsExportingProblemBank] = useState(false);
   const [isImportingProblemBank, setIsImportingProblemBank] = useState(false);
+  const [isWritingSyncFile, setIsWritingSyncFile] = useState(false);
+  const [isSyncingProblemBank, setIsSyncingProblemBank] = useState(false);
   const [transferMessage, setTransferMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -117,10 +137,11 @@ export function LocalWorkspaceSettingsDialog({
     async function load() {
       setIsLoading(true);
       try {
-        const [loadedSettings, loadedTooling, loadedAi] = await Promise.all([
+        const [loadedSettings, loadedTooling, loadedAi, loadedFileSyncStatus] = await Promise.all([
           getLocalSettings(),
           getLocalToolingStatus(),
           getAiStatus(),
+          getProblemBankFileSyncStatus(),
         ]);
         if (active) {
           const normalizedSettings = withSettingsDefaults(loadedSettings);
@@ -128,6 +149,7 @@ export function LocalWorkspaceSettingsDialog({
           setAiProviderDrafts(aiDraftsFromSettings(normalizedSettings));
           setToolingStatus(loadedTooling);
           setAiStatus(loadedAi);
+          setFileSyncStatus(loadedFileSyncStatus);
           setError(null);
         }
       } catch (loadError) {
@@ -159,23 +181,31 @@ export function LocalWorkspaceSettingsDialog({
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [onClose]);
 
-  async function handleSave() {
+  async function persistSettingsDraft() {
     const validationError = schedulingValidationError(settings);
     if (validationError) {
-      setError(validationError);
-      return;
+      throw new Error(validationError);
     }
 
+    const saved = await saveLocalSettings(settings);
+    const normalizedSaved = withSettingsDefaults(saved);
+    setSettings(normalizedSaved);
+    onSaved(normalizedSaved);
+    return normalizedSaved;
+  }
+
+  async function handleSave() {
     setIsSaving(true);
     setError(null);
 
     try {
-      const saved = await saveLocalSettings(settings);
-      const refreshedTooling = await getLocalToolingStatus();
-      const normalizedSaved = withSettingsDefaults(saved);
-      setSettings(normalizedSaved);
+      await persistSettingsDraft();
+      const [refreshedTooling, refreshedFileSyncStatus] = await Promise.all([
+        getLocalToolingStatus(),
+        getProblemBankFileSyncStatus(),
+      ]);
       setToolingStatus(refreshedTooling);
-      onSaved(normalizedSaved);
+      setFileSyncStatus(refreshedFileSyncStatus);
       onClose();
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "Unable to save local workspace settings.");
@@ -195,8 +225,7 @@ export function LocalWorkspaceSettingsDialog({
     setError(null);
 
     try {
-      const saved = await saveLocalSettings(settings);
-      setSettings(withSettingsDefaults(saved));
+      await persistSettingsDraft();
       setAiStatus(await getAiStatus());
     } catch (testError) {
       setError(testError instanceof Error ? testError.message : "Unable to test AI evaluator connection.");
@@ -264,6 +293,45 @@ export function LocalWorkspaceSettingsDialog({
     }
   }
 
+  async function handleWriteSyncFile() {
+    setIsWritingSyncFile(true);
+    setTransferMessage(null);
+    setError(null);
+
+    try {
+      await persistSettingsDraft();
+      const status = await writeProblemBankSyncFile();
+      setFileSyncStatus(status);
+      setTransferMessage(status.lastImportSummary ?? "Wrote current problem bank snapshot to the live JSON file.");
+    } catch (syncError) {
+      setError(syncError instanceof Error ? syncError.message : "Unable to write problem bank sync file.");
+    } finally {
+      setIsWritingSyncFile(false);
+    }
+  }
+
+  async function handleSyncNow() {
+    setIsSyncingProblemBank(true);
+    setTransferMessage(null);
+    setError(null);
+
+    try {
+      await persistSettingsDraft();
+      const status = await importProblemBankSyncFile();
+      setFileSyncStatus(status);
+      if (status.lastError) {
+        setError(status.lastError);
+        return;
+      }
+      onProblemBankImported();
+      setTransferMessage(status.lastImportSummary ?? "Imported problem bank from the live JSON file.");
+    } catch (syncError) {
+      setError(syncError instanceof Error ? syncError.message : "Unable to sync problem bank JSON file.");
+    } finally {
+      setIsSyncingProblemBank(false);
+    }
+  }
+
   function setNumericSetting(
     key: "minimumIntervalDays" | "maximumCodingIntervalDays" | "maximumExplanationIntervalDays",
     value: string,
@@ -281,6 +349,7 @@ export function LocalWorkspaceSettingsDialog({
       [settings.aiProvider]: {
         baseUrl: settings.aiBaseUrl,
         model: settings.aiModel,
+        apiKey: settings.aiApiKey,
       },
     };
     const nextProviderSettings = nextDrafts[aiProvider];
@@ -290,6 +359,7 @@ export function LocalWorkspaceSettingsDialog({
       aiProvider,
       aiBaseUrl: nextProviderSettings.baseUrl,
       aiModel: nextProviderSettings.model,
+      aiApiKey: nextProviderSettings.apiKey,
       ollamaBaseUrl: nextDrafts.OLLAMA.baseUrl,
       ollamaModel: nextDrafts.OLLAMA.model,
     }));
@@ -325,6 +395,26 @@ export function LocalWorkspaceSettingsDialog({
       ...(current.aiProvider === "OLLAMA" ? { ollamaModel: aiModel } : {}),
     }));
   }
+
+  function updateAiApiKey(aiApiKey: string) {
+    setAiProviderDrafts((current) => ({
+      ...current,
+      [settings.aiProvider]: {
+        ...current[settings.aiProvider],
+        apiKey: aiApiKey,
+      },
+    }));
+    setSettings((current) => ({
+      ...current,
+      aiApiKey,
+    }));
+  }
+
+  const syncActionsDisabled =
+    !settings.problemBankSyncEnabled ||
+    !settings.problemBankSyncFilePath.trim() ||
+    isWritingSyncFile ||
+    isSyncingProblemBank;
 
   return (
     <div
@@ -368,11 +458,11 @@ export function LocalWorkspaceSettingsDialog({
                 <span>Preferred editor</span>
                 <FormSelect<LocalEditorPreference>
                   ariaLabel="Preferred code editor"
-                  onValueChange={() => setSettings((current) => ({ ...current, editor: "VS_CODE" }))}
+                  onValueChange={(editor) => setSettings((current) => ({ ...current, editor }))}
                   options={editorOptions}
                   value={settings.editor}
                 />
-                <small>Only VS Code is enabled while JURO uses its dedicated editor window workflow.</small>
+                <small>VS Code uses a dedicated JURO workspace window. Neovim opens the scaffold in your terminal.</small>
               </label>
 
               <section className="settings-section" aria-label="AI evaluation settings">
@@ -380,8 +470,8 @@ export function LocalWorkspaceSettingsDialog({
                   <div>
                     <h3>AI Evaluation</h3>
                     <p>
-                      Used for verbal knowledge checks. Choose Ollama for local models or Codex Adapter for an
-                      OpenAI-compatible local Codex endpoint.
+                      Used for verbal knowledge checks. Choose Ollama for local models, Codex Adapter for a local
+                      OpenAI-compatible endpoint, or Anthropic Claude with an API key.
                     </p>
                   </div>
                   <button
@@ -404,7 +494,11 @@ export function LocalWorkspaceSettingsDialog({
                     value={settings.aiProvider}
                   />
                   <small>
-                    {settings.aiProvider === "CODEX_ADAPTER" ? (
+                    {settings.aiProvider === "ANTHROPIC" ? (
+                      <>
+                        Anthropic Claude uses the official Messages API with your API key.
+                      </>
+                    ) : settings.aiProvider === "CODEX_ADAPTER" ? (
                       <>
                         Codex Adapter expects an OpenAI-compatible URL, usually <code>http://127.0.0.1:11435/v1/</code>.
                       </>
@@ -417,7 +511,7 @@ export function LocalWorkspaceSettingsDialog({
                 </label>
 
                 <label className="settings-field">
-                  <span>{settings.aiProvider === "CODEX_ADAPTER" ? "Codex Adapter base URL" : "Ollama base URL"}</span>
+                  <span>{aiProviderBaseUrlLabel(settings.aiProvider)}</span>
                   <input
                     placeholder={aiProviderDefaults[settings.aiProvider].baseUrl}
                     value={settings.aiBaseUrl}
@@ -433,15 +527,31 @@ export function LocalWorkspaceSettingsDialog({
                     onChange={(event) => updateAiModel(event.target.value)}
                   />
                   <small>
-                    {settings.aiProvider === "CODEX_ADAPTER"
-                      ? "Example: gpt-5.4 or gpt-5-mini through the OCA API Adapter."
-                      : "Example: llama3.1, qwen2.5, or another model installed in Ollama."}
+                    {settings.aiProvider === "ANTHROPIC"
+                      ? "Example: claude-sonnet-4-20250514."
+                      : settings.aiProvider === "CODEX_ADAPTER"
+                        ? "Example: gpt-5.4 or gpt-5-mini through the OCA API Adapter."
+                        : "Example: llama3.1, qwen2.5, or another model installed in Ollama."}
                   </small>
                 </label>
 
+                {settings.aiProvider === "ANTHROPIC" ? (
+                  <label className="settings-field">
+                    <span>Anthropic API key</span>
+                    <input
+                      autoComplete="off"
+                      placeholder="sk-ant-..."
+                      type="password"
+                      value={settings.aiApiKey}
+                      onChange={(event) => updateAiApiKey(event.target.value)}
+                    />
+                    <small>The key is saved in JURO local settings on this machine.</small>
+                  </label>
+                ) : null}
+
                 <label className="settings-field">
                   <span>Transcription provider</span>
-                  <FormSelect
+                  <FormSelect<TranscriptionProvider>
                     ariaLabel="Transcription provider"
                     onValueChange={(transcriptionProvider) =>
                       setSettings((current) => ({ ...current, transcriptionProvider }))
@@ -455,7 +565,7 @@ export function LocalWorkspaceSettingsDialog({
                 {aiStatus ? (
                   <div className="tooling-status">
                     <ToolingRow
-                      label={settings.aiProvider === "CODEX_ADAPTER" ? "Codex Adapter" : "Ollama"}
+                      label={aiProviderStatusLabel(settings.aiProvider)}
                       ok={aiStatus.available}
                       value={aiStatus.message}
                     />
@@ -614,6 +724,72 @@ export function LocalWorkspaceSettingsDialog({
                   />
                 </div>
 
+                <div className="settings-sync-group">
+                  <label className="settings-toggle-row">
+                    <input
+                      checked={settings.problemBankSyncEnabled}
+                      onChange={(event) =>
+                        setSettings((current) => ({
+                          ...current,
+                          problemBankSyncEnabled: event.target.checked,
+                        }))
+                      }
+                      type="checkbox"
+                    />
+                    <span>Live JSON sync</span>
+                  </label>
+
+                  <label className="settings-field">
+                    <span>Live JSON file</span>
+                    <input
+                      placeholder="/Users/me/juro-workspace/juro-problem-bank.json"
+                      value={settings.problemBankSyncFilePath}
+                      onChange={(event) =>
+                        setSettings((current) => ({ ...current, problemBankSyncFilePath: event.target.value }))
+                      }
+                    />
+                    <small>Save a snapshot to this path, then edit it in your editor. JURO imports changes automatically.</small>
+                  </label>
+
+                  <div className="settings-actions-row">
+                    <button
+                      className="button button--ghost button--sm"
+                      disabled={syncActionsDisabled}
+                      onClick={handleWriteSyncFile}
+                      type="button"
+                    >
+                      <Download size={14} />
+                      {isWritingSyncFile ? "Writing..." : "Write sync file"}
+                    </button>
+                    <button
+                      className="button button--ghost button--sm"
+                      disabled={syncActionsDisabled}
+                      onClick={handleSyncNow}
+                      type="button"
+                    >
+                      <RefreshCw size={14} />
+                      {isSyncingProblemBank ? "Syncing..." : "Sync now"}
+                    </button>
+                  </div>
+
+                  {fileSyncStatus?.enabled ? (
+                    <div className="tooling-status" aria-label="Problem bank JSON sync status">
+                      <ToolingRow
+                        label="JSON sync"
+                        ok={fileSyncStatus.synced || Boolean(fileSyncStatus.fileExists && !fileSyncStatus.lastError)}
+                        value={fileSyncStatusText(fileSyncStatus)}
+                      />
+                      {fileSyncStatus.lastImportedAt ? (
+                        <ToolingRow
+                          label="Last sync"
+                          ok={!fileSyncStatus.lastError}
+                          value={new Date(fileSyncStatus.lastImportedAt).toLocaleString()}
+                        />
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
+
                 {transferMessage ? <div className="settings-transfer-message">{transferMessage}</div> : null}
               </section>
 
@@ -670,8 +846,46 @@ function schedulingValidationError(settings: LocalWorkspaceSettings) {
   return null;
 }
 
+function aiProviderBaseUrlLabel(provider: AiProvider) {
+  if (provider === "ANTHROPIC") {
+    return "Anthropic base URL";
+  }
+  if (provider === "CODEX_ADAPTER") {
+    return "Codex Adapter base URL";
+  }
+  return "Ollama base URL";
+}
+
+function aiProviderStatusLabel(provider: AiProvider) {
+  if (provider === "ANTHROPIC") {
+    return "Anthropic";
+  }
+  if (provider === "CODEX_ADAPTER") {
+    return "Codex Adapter";
+  }
+  return "Ollama";
+}
+
+function fileSyncStatusText(status: ProblemBankFileSyncStatus) {
+  if (status.importInProgress) {
+    return "Importing live JSON file.";
+  }
+  if (status.lastError) {
+    return status.lastError;
+  }
+  if (!status.fileExists) {
+    return "File not found.";
+  }
+  if (status.synced) {
+    return status.lastImportSummary ?? "Live JSON file is synced.";
+  }
+  return "Watching for changes.";
+}
+
 function withSettingsDefaults(settings: LocalWorkspaceSettings): LocalWorkspaceSettings {
   const aiProvider = settings.aiProvider ?? "OLLAMA";
+  const editor = settings.editor === "NVIM" || settings.editor === "VS_CODE" ? settings.editor : "VS_CODE";
+  const transcriptionProvider = settings.transcriptionProvider === "MANUAL" ? "MANUAL" : "BROWSER";
   const activeBaseUrl =
     settings.aiBaseUrl ??
     (aiProvider === "OLLAMA" ? settings.ollamaBaseUrl : undefined) ??
@@ -680,13 +894,15 @@ function withSettingsDefaults(settings: LocalWorkspaceSettings): LocalWorkspaceS
     settings.aiModel ??
     (aiProvider === "OLLAMA" ? settings.ollamaModel : undefined) ??
     aiProviderDefaults[aiProvider].model;
+  const activeApiKey = settings.aiApiKey ?? (aiProvider === "ANTHROPIC" ? aiProviderDefaults.ANTHROPIC.apiKey : "");
   return {
     ...settings,
-    editor: "VS_CODE",
+    editor,
     customEditorCommand: "",
     aiProvider,
     aiBaseUrl: activeBaseUrl,
     aiModel: activeModel,
+    aiApiKey: activeApiKey,
     ollamaBaseUrl:
       settings.ollamaBaseUrl ??
       (aiProvider === "OLLAMA" ? activeBaseUrl : undefined) ??
@@ -695,6 +911,7 @@ function withSettingsDefaults(settings: LocalWorkspaceSettings): LocalWorkspaceS
       settings.ollamaModel ??
       (aiProvider === "OLLAMA" ? activeModel : undefined) ??
       aiProviderDefaults.OLLAMA.model,
+    transcriptionProvider,
     schedulerAlgorithm: settings.schedulerAlgorithm ?? schedulingDefaults.schedulerAlgorithm,
     reviewIntensity: schedulingDefaults.reviewIntensity,
     codeReviewFrequency: settings.codeReviewFrequency ?? schedulingDefaults.codeReviewFrequency,
@@ -704,10 +921,12 @@ function withSettingsDefaults(settings: LocalWorkspaceSettings): LocalWorkspaceS
     maximumCodingIntervalDays: settings.maximumCodingIntervalDays ?? schedulingDefaults.maximumCodingIntervalDays,
     maximumExplanationIntervalDays:
       settings.maximumExplanationIntervalDays ?? schedulingDefaults.maximumExplanationIntervalDays,
+    problemBankSyncEnabled: settings.problemBankSyncEnabled ?? false,
+    problemBankSyncFilePath: settings.problemBankSyncFilePath ?? "",
   };
 }
 
-function aiDraftsFromSettings(settings: LocalWorkspaceSettings): Record<AiProvider, { baseUrl: string; model: string }> {
+function aiDraftsFromSettings(settings: LocalWorkspaceSettings): Record<AiProvider, { baseUrl: string; model: string; apiKey: string }> {
   return {
     OLLAMA: {
       baseUrl:
@@ -718,10 +937,17 @@ function aiDraftsFromSettings(settings: LocalWorkspaceSettings): Record<AiProvid
         settings.ollamaModel ??
         (settings.aiProvider === "OLLAMA" ? settings.aiModel : undefined) ??
         aiProviderDefaults.OLLAMA.model,
+      apiKey: "",
     },
     CODEX_ADAPTER: {
       baseUrl: settings.aiProvider === "CODEX_ADAPTER" ? settings.aiBaseUrl : aiProviderDefaults.CODEX_ADAPTER.baseUrl,
       model: settings.aiProvider === "CODEX_ADAPTER" ? settings.aiModel : aiProviderDefaults.CODEX_ADAPTER.model,
+      apiKey: settings.aiProvider === "CODEX_ADAPTER" ? settings.aiApiKey : aiProviderDefaults.CODEX_ADAPTER.apiKey,
+    },
+    ANTHROPIC: {
+      baseUrl: settings.aiProvider === "ANTHROPIC" ? settings.aiBaseUrl : aiProviderDefaults.ANTHROPIC.baseUrl,
+      model: settings.aiProvider === "ANTHROPIC" ? settings.aiModel : aiProviderDefaults.ANTHROPIC.model,
+      apiKey: settings.aiProvider === "ANTHROPIC" ? settings.aiApiKey : aiProviderDefaults.ANTHROPIC.apiKey,
     },
   };
 }

@@ -20,7 +20,7 @@ public record ProblemRequest(
         String starterCode,
         String referenceSolution,
         String evaluationNotes,
-        @NotBlank String solutionVideoUrl,
+        String solutionVideoUrl,
         @NotBlank @Size(min = 50, message = "must be at least 50 characters") String knowledgeRubric,
         @NotNull @Size(min = 3, message = "must include at least 3 examples") List<@Valid ProblemExampleRequest> examples,
         @NotNull @Size(min = 3, message = "must include at least 3 test cases") List<@Valid ProblemTestCaseRequest> testCases

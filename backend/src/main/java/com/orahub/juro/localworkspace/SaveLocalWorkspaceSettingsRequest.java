@@ -7,6 +7,7 @@ public record SaveLocalWorkspaceSettingsRequest(
         String aiProvider,
         String aiBaseUrl,
         String aiModel,
+        String aiApiKey,
         String ollamaBaseUrl,
         String ollamaModel,
         String transcriptionProvider,
@@ -17,6 +18,8 @@ public record SaveLocalWorkspaceSettingsRequest(
         String practiceFocus,
         Integer minimumIntervalDays,
         Integer maximumCodingIntervalDays,
-        Integer maximumExplanationIntervalDays
+        Integer maximumExplanationIntervalDays,
+        Boolean problemBankSyncEnabled,
+        String problemBankSyncFilePath
 ) {
 }

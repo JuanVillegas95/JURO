@@ -448,8 +448,31 @@ public class LocalWorkspaceService {
     private List<String> editorCommand(LocalWorkspaceSettings settings, Problem problem, Path scaffold) {
         return switch (settings.editor()) {
             case "VS_CODE" -> dedicatedVsCodeCommand(settings, problem, scaffold);
+            case "NVIM" -> neovimCommand(scaffold);
             default -> List.of();
         };
+    }
+
+    private List<String> neovimCommand(Path scaffold) {
+        String scaffoldPath = scaffold.toAbsolutePath().normalize().toString();
+        if (isMac()) {
+            String shellCommand = "cd " + shellQuote(scaffoldPath) + " && nvim .";
+            return List.of(
+                    "osascript",
+                    "-e", "tell application \"Terminal\" to activate",
+                    "-e", "tell application \"Terminal\" to do script " + appleScriptString(shellCommand)
+            );
+        }
+
+        if (isWindows()) {
+            return List.of("cmd", "/c", "start", "JURO - Neovim", "/D", scaffoldPath, "nvim", ".");
+        }
+
+        return List.of(
+                "sh",
+                "-lc",
+                "cd " + shellQuote(scaffoldPath) + " && exec \"${TERMINAL:-x-terminal-emulator}\" -e nvim ."
+        );
     }
 
     private List<String> dedicatedVsCodeCommand(LocalWorkspaceSettings settings, Problem problem, Path scaffold) {
@@ -511,6 +534,9 @@ public class LocalWorkspaceService {
     private String launchMessage(LocalWorkspaceSettings settings, Path scaffold) {
         if (settings.editor().equals("VS_CODE")) {
             return "Opened %s in JURO's dedicated VS Code window.".formatted(scaffold);
+        }
+        if (settings.editor().equals("NVIM")) {
+            return "Opened %s in Neovim.".formatted(scaffold);
         }
         return "Opened %s.".formatted(scaffold);
     }
@@ -590,6 +616,18 @@ public class LocalWorkspaceService {
 
     private boolean isMac() {
         return System.getProperty("os.name").toLowerCase(Locale.ROOT).contains("mac");
+    }
+
+    private boolean isWindows() {
+        return System.getProperty("os.name").toLowerCase(Locale.ROOT).contains("win");
+    }
+
+    private String shellQuote(String value) {
+        return "'" + value.replace("'", "'\"'\"'") + "'";
+    }
+
+    private String appleScriptString(String value) {
+        return "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
     }
 
     private LocalProblemWorkspaceResponse workspaceResponse(

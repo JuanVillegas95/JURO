@@ -108,7 +108,7 @@ flowchart TB
   end
 
   subgraph LocalTools["Local tools and files"]
-    VSCode[VS Code CLI<br/>dedicated JURO user-data dir]
+    LocalEditor[VS Code or Neovim<br/>preferred editor]
     JDK[JDK tools<br/>java / javac]
     Workspace[Workspace directory<br/>juro-current]
     SettingsFile[settings.json]
@@ -144,7 +144,7 @@ flowchart TB
   WorkspaceSvc --> Scaffold
   WorkspaceSvc --> Settings
   WorkspaceSvc --> Workspace
-  WorkspaceSvc --> VSCode
+  WorkspaceSvc --> LocalEditor
   WorkspaceSvc --> JDK
   Settings --> SettingsFile
   Repos --> H2
@@ -176,7 +176,7 @@ flowchart TB
     BackendJar --> SettingsJson[backend/settings.json]
     BackendJar --> AppLogs[App log dir<br/>juro-backend.log]
     BackendJar --> WorkspaceDir[Configured workspace<br/>juro-current]
-    BackendJar --> VSCode[VS Code app / code CLI]
+    BackendJar --> LocalEditor[VS Code app / code CLI or Neovim]
     BackendJar --> JavaTools[Java 17+ runtime and javac]
     BackendJar --> Ollama[Ollama localhost:11434]
     BackendJar --> CodexAdapter[Codex Adapter localhost:11435/v1]
@@ -578,7 +578,7 @@ sequenceDiagram
 
 Tauri starts the backend as a child process and injects desktop settings such as `SPRING_PROFILES_ACTIVE=desktop`, `SERVER_PORT=18191`, and `JURO_DATA_DIR`.
 
-## Sequence: Open Problem In VS Code
+## Sequence: Open Problem In Editor
 
 ```mermaid
 sequenceDiagram
@@ -589,7 +589,7 @@ sequenceDiagram
   participant Problem as ProblemService
   participant Gen as LocalJavaScaffoldGenerator
   participant FS as Workspace filesystem
-  participant Code as VS Code CLI
+  participant Editor as Preferred editor
 
   User->>UI: Click problem row or Open in Editor
   UI->>API: POST /api/local/problems/{problemId}/open-editor
@@ -598,15 +598,15 @@ sequenceDiagram
   WS->>FS: Delete and regenerate juro-current
   WS->>Gen: Generate src/Main.java from solve signature and test cases
   WS->>FS: Write README.md, src/Solution.java, tests/cases.json, run scripts
-  WS->>FS: Write .juro/current.code-workspace and VS Code user-data dir
-  WS->>Code: code --user-data-dir ... --reuse-window --wait workspace.code-workspace
-  Code-->>WS: process id
+  WS->>FS: Write scaffold files and editor metadata when needed
+  WS->>Editor: Open scaffold in VS Code or Neovim
+  Editor-->>WS: process id when available
   WS-->>API: LocalProblemWorkspaceResponse status OPEN
   API-->>UI: active workspace
   UI->>UI: Show Current Problem panel
 ```
 
-JURO isolates its VS Code workflow with a dedicated user-data directory under the JURO workspace metadata folder.
+JURO isolates its VS Code workflow with a dedicated user-data directory under the JURO workspace metadata folder. Neovim opens the generated scaffold directly in a terminal.
 
 ## Sequence: Run Local Java Tests And Grade Coding
 
@@ -740,8 +740,8 @@ flowchart LR
 
   ProblemBank --> EditorAPI[Open editor API]
   EditorAPI --> ScaffoldFiles[Local scaffold files<br/>README / Solution.java / Main.java / cases.json]
-  ScaffoldFiles --> VSCode[VS Code]
-  VSCode --> Solution[Edited Solution.java]
+  ScaffoldFiles --> LocalEditor[Preferred editor]
+  LocalEditor --> Solution[Edited Solution.java]
   Solution --> RunAPI[Run tests API]
   RunAPI --> JavaRun[javac + Main]
   JavaRun --> TestResult[Test result response]

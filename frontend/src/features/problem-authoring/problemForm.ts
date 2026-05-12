@@ -187,6 +187,7 @@ function validateParsedPrimitive(type: PrimitiveArrayItem | MatrixArrayItem, val
 }
 
 export const returnTypeOptions = testValueTypes.map((type) => ({ label: type, value: type })) satisfies FormSelectOption<TestValueType>[];
+const youtubeUrlPattern = /^https?:\/\/(www\.)?(youtube\.com\/(watch\?v=|embed\/)|youtu\.be\/)[A-Za-z0-9_-]+.*$/i;
 
 export const problemSchema = z
   .object({
@@ -203,10 +204,8 @@ export const problemSchema = z
     description: z.string().min(10, "Description must be at least 10 characters"),
     solutionVideoUrl: z
       .string()
-      .regex(
-        /^https?:\/\/(www\.)?(youtube\.com\/(watch\?v=|embed\/)|youtu\.be\/)[A-Za-z0-9_-]+.*$/i,
-        "Enter a valid YouTube URL",
-      ),
+      .trim()
+      .refine((value) => value.length === 0 || youtubeUrlPattern.test(value), "Enter a valid YouTube URL"),
     knowledgeRubric: z.string().min(50, "Knowledge rubric must be at least 50 characters"),
     examples: z
       .array(
@@ -311,7 +310,7 @@ export function newProblemDraft(): EditProblemDraft {
     solutionVideoUrl: "",
     knowledgeRubric: "",
     examples: [],
-    starterCode: "",
+    starterCode: defaultEditorCode("JAVA"),
     referenceSolution: "",
     testCases: [],
   };
@@ -334,7 +333,7 @@ export function initialEditProblemDraft(mode: "edit" | "new", problem?: CatalogP
     languages: [problem.type],
     difficulty: problem.difficulty,
     description: problem.summary || draft.description,
-    solutionVideoUrl: problem.solutionVideoUrl || draft.solutionVideoUrl,
+    solutionVideoUrl: problem.solutionVideoUrl ?? "",
     starterCode: defaultEditorCode(problem.type),
     referenceSolution: defaultEditorCode(problem.type),
   };

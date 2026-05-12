@@ -64,9 +64,12 @@ class LocalSettingsServiceTest {
                 defaults.aiProvider(),
                 defaults.aiBaseUrl(),
                 defaults.aiModel(),
+                defaults.aiApiKey(),
                 defaults.ollamaBaseUrl(),
                 defaults.ollamaModel(),
                 defaults.transcriptionProvider(),
+                null,
+                null,
                 null,
                 null,
                 null,
@@ -98,6 +101,7 @@ class LocalSettingsServiceTest {
                 "CODEX_ADAPTER",
                 "http://127.0.0.1:11435/v1/",
                 "gpt-5.4",
+                "",
                 defaults.ollamaBaseUrl(),
                 defaults.ollamaModel(),
                 defaults.transcriptionProvider(),
@@ -108,7 +112,9 @@ class LocalSettingsServiceTest {
                 defaults.practiceFocus(),
                 defaults.minimumIntervalDays(),
                 defaults.maximumCodingIntervalDays(),
-                defaults.maximumExplanationIntervalDays()
+                defaults.maximumExplanationIntervalDays(),
+                defaults.problemBankSyncEnabled(),
+                defaults.problemBankSyncFilePath()
         ));
 
         assertThat(saved.aiProvider()).isEqualTo("CODEX_ADAPTER");
@@ -119,17 +125,18 @@ class LocalSettingsServiceTest {
     }
 
     @Test
-    void rejectsNonVsCodeEditorSettings() throws IOException {
+    void savesAnthropicAiProviderSettings() throws IOException {
         LocalSettingsService service = new LocalSettingsService(new ObjectMapper(), settingsPath().toString());
         LocalWorkspaceSettings defaults = LocalWorkspaceSettings.defaults();
 
-        assertThatThrownBy(() -> service.saveSettings(new SaveLocalWorkspaceSettingsRequest(
+        LocalWorkspaceSettings saved = service.saveSettings(new SaveLocalWorkspaceSettingsRequest(
                 defaults.workspaceDirectory(),
-                "CURSOR",
-                "",
-                defaults.aiProvider(),
-                defaults.aiBaseUrl(),
-                defaults.aiModel(),
+                defaults.editor(),
+                defaults.customEditorCommand(),
+                "ANTHROPIC",
+                "https://api.anthropic.com",
+                "claude-sonnet-4-20250514",
+                "sk-ant-test",
                 defaults.ollamaBaseUrl(),
                 defaults.ollamaModel(),
                 defaults.transcriptionProvider(),
@@ -140,9 +147,106 @@ class LocalSettingsServiceTest {
                 defaults.practiceFocus(),
                 defaults.minimumIntervalDays(),
                 defaults.maximumCodingIntervalDays(),
-                defaults.maximumExplanationIntervalDays()
+                defaults.maximumExplanationIntervalDays(),
+                defaults.problemBankSyncEnabled(),
+                defaults.problemBankSyncFilePath()
+        ));
+
+        assertThat(saved.aiProvider()).isEqualTo("ANTHROPIC");
+        assertThat(saved.aiBaseUrl()).isEqualTo("https://api.anthropic.com");
+        assertThat(saved.aiModel()).isEqualTo("claude-sonnet-4-20250514");
+        assertThat(saved.aiApiKey()).isEqualTo("sk-ant-test");
+    }
+
+    @Test
+    void savesNeovimEditorSettings() throws IOException {
+        LocalSettingsService service = new LocalSettingsService(new ObjectMapper(), settingsPath().toString());
+        LocalWorkspaceSettings defaults = LocalWorkspaceSettings.defaults();
+
+        LocalWorkspaceSettings saved = service.saveSettings(new SaveLocalWorkspaceSettingsRequest(
+                defaults.workspaceDirectory(),
+                "NVIM",
+                "",
+                defaults.aiProvider(),
+                defaults.aiBaseUrl(),
+                defaults.aiModel(),
+                defaults.aiApiKey(),
+                defaults.ollamaBaseUrl(),
+                defaults.ollamaModel(),
+                defaults.transcriptionProvider(),
+                defaults.schedulerAlgorithm(),
+                defaults.reviewIntensity(),
+                defaults.codeReviewFrequency(),
+                defaults.explanationReviewFrequency(),
+                defaults.practiceFocus(),
+                defaults.minimumIntervalDays(),
+                defaults.maximumCodingIntervalDays(),
+                defaults.maximumExplanationIntervalDays(),
+                defaults.problemBankSyncEnabled(),
+                defaults.problemBankSyncFilePath()
+        ));
+
+        assertThat(saved.editor()).isEqualTo("NVIM");
+    }
+
+    @Test
+    void rejectsUnsupportedEditorSettings() throws IOException {
+        LocalSettingsService service = new LocalSettingsService(new ObjectMapper(), settingsPath().toString());
+        LocalWorkspaceSettings defaults = LocalWorkspaceSettings.defaults();
+
+        assertThatThrownBy(() -> service.saveSettings(new SaveLocalWorkspaceSettingsRequest(
+                defaults.workspaceDirectory(),
+                "CURSOR",
+                "",
+                defaults.aiProvider(),
+                defaults.aiBaseUrl(),
+                defaults.aiModel(),
+                defaults.aiApiKey(),
+                defaults.ollamaBaseUrl(),
+                defaults.ollamaModel(),
+                defaults.transcriptionProvider(),
+                defaults.schedulerAlgorithm(),
+                defaults.reviewIntensity(),
+                defaults.codeReviewFrequency(),
+                defaults.explanationReviewFrequency(),
+                defaults.practiceFocus(),
+                defaults.minimumIntervalDays(),
+                defaults.maximumCodingIntervalDays(),
+                defaults.maximumExplanationIntervalDays(),
+                defaults.problemBankSyncEnabled(),
+                defaults.problemBankSyncFilePath()
         ))).isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("VS_CODE");
+                .hasMessageContaining("VS_CODE or NVIM");
+    }
+
+    @Test
+    void rejectsRemovedWhisperTranscriptionProvider() throws IOException {
+        LocalSettingsService service = new LocalSettingsService(new ObjectMapper(), settingsPath().toString());
+        LocalWorkspaceSettings defaults = LocalWorkspaceSettings.defaults();
+
+        assertThatThrownBy(() -> service.saveSettings(new SaveLocalWorkspaceSettingsRequest(
+                defaults.workspaceDirectory(),
+                defaults.editor(),
+                defaults.customEditorCommand(),
+                defaults.aiProvider(),
+                defaults.aiBaseUrl(),
+                defaults.aiModel(),
+                defaults.aiApiKey(),
+                defaults.ollamaBaseUrl(),
+                defaults.ollamaModel(),
+                "WHISPER",
+                defaults.schedulerAlgorithm(),
+                defaults.reviewIntensity(),
+                defaults.codeReviewFrequency(),
+                defaults.explanationReviewFrequency(),
+                defaults.practiceFocus(),
+                defaults.minimumIntervalDays(),
+                defaults.maximumCodingIntervalDays(),
+                defaults.maximumExplanationIntervalDays(),
+                defaults.problemBankSyncEnabled(),
+                defaults.problemBankSyncFilePath()
+        ))).isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("BROWSER or MANUAL");
     }
 
     @Test
@@ -184,6 +288,7 @@ class LocalSettingsServiceTest {
                 defaults.aiProvider(),
                 defaults.aiBaseUrl(),
                 defaults.aiModel(),
+                defaults.aiApiKey(),
                 defaults.ollamaBaseUrl(),
                 defaults.ollamaModel(),
                 defaults.transcriptionProvider(),
@@ -194,7 +299,9 @@ class LocalSettingsServiceTest {
                 practiceFocus,
                 minimumIntervalDays,
                 maximumCodingIntervalDays,
-                maximumExplanationIntervalDays
+                maximumExplanationIntervalDays,
+                defaults.problemBankSyncEnabled(),
+                defaults.problemBankSyncFilePath()
         );
     }
 

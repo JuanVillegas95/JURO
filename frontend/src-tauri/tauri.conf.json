@@ -26,9 +26,6 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
-    "resources": {
-      "../../backend/target/juro-backend-0.0.1-SNAPSHOT.jar": "backend/juro-backend.jar"
-    }
+    "targets": "all"
   }
 }

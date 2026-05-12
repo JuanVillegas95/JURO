@@ -70,7 +70,7 @@ public class ProblemService {
         problem.setStarterCode(trimToNull(request.starterCode()));
         problem.setReferenceSolution(trimToNull(request.referenceSolution()));
         problem.setEvaluationNotes(trimToNull(request.evaluationNotes()));
-        problem.setSolutionVideoUrl(request.solutionVideoUrl().trim());
+        problem.setSolutionVideoUrl(trimToNull(request.solutionVideoUrl()));
         problem.setKnowledgeRubric(request.knowledgeRubric().trim());
 
         List<ProblemExample> examples = request.examples().stream()
@@ -98,7 +98,7 @@ public class ProblemService {
         problem.setStarterCode(trimToNull(request.starterCode()));
         problem.setReferenceSolution(trimToNull(request.referenceSolution()));
         problem.setEvaluationNotes(trimToNull(request.evaluationNotes()));
-        problem.setSolutionVideoUrl(request.solutionVideoUrl().trim());
+        problem.setSolutionVideoUrl(trimToNull(request.solutionVideoUrl()));
         problem.setKnowledgeRubric(request.knowledgeRubric().trim());
         problem.replaceExamples(request.examples().stream()
                 .sorted(Comparator.comparingInt(ProblemExampleRequest::sortOrder))
@@ -136,8 +136,8 @@ public class ProblemService {
             throw new IllegalArgumentException("Problems must include at least 3 runnable test cases.");
         }
         String solutionVideoUrl = trimToNull(request.solutionVideoUrl());
-        if (solutionVideoUrl == null || !YOUTUBE_URL_PATTERN.matcher(solutionVideoUrl).matches()) {
-            throw new IllegalArgumentException("Solution video must be a valid YouTube URL.");
+        if (solutionVideoUrl != null && !YOUTUBE_URL_PATTERN.matcher(solutionVideoUrl).matches()) {
+            throw new IllegalArgumentException("Solution video must be a valid YouTube URL when provided.");
         }
         String knowledgeRubric = trimToNull(request.knowledgeRubric());
         if (knowledgeRubric == null || knowledgeRubric.length() < 50) {

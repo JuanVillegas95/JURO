@@ -27,7 +27,7 @@ export interface ProblemSummary {
   difficulty: ProblemDifficulty;
   exampleCount: number;
   testCaseCount: number;
-  solutionVideoUrl: string;
+  solutionVideoUrl?: string | null;
   codingReview: ReviewState;
   explanationReview: ReviewState;
   createdAt: string;
@@ -67,7 +67,7 @@ export interface ProblemDetail {
   starterCode?: string | null;
   referenceSolution?: string | null;
   evaluationNotes?: string | null;
-  solutionVideoUrl: string;
+  solutionVideoUrl?: string | null;
   knowledgeRubric: string;
   createdAt: string;
   updatedAt: string;
@@ -86,7 +86,7 @@ export interface ProblemRequest {
   starterCode?: string;
   referenceSolution?: string;
   evaluationNotes?: string;
-  solutionVideoUrl: string;
+  solutionVideoUrl?: string | null;
   knowledgeRubric: string;
   examples: ProblemExample[];
   testCases: ProblemTestCase[];
@@ -118,8 +118,9 @@ export interface SubmissionRequest {
   sourceCode: string;
 }
 
-export type LocalEditorPreference = "VS_CODE";
-export type AiProvider = "OLLAMA" | "CODEX_ADAPTER";
+export type LocalEditorPreference = "VS_CODE" | "NVIM";
+export type AiProvider = "OLLAMA" | "CODEX_ADAPTER" | "ANTHROPIC";
+export type TranscriptionProvider = "BROWSER" | "MANUAL";
 export type SchedulerAlgorithm = "SM2";
 export type ReviewIntensity = "LIGHT" | "BALANCED" | "AGGRESSIVE";
 export type ReviewFrequency = "LESS_OFTEN" | "BALANCED" | "MORE_OFTEN";
@@ -132,9 +133,10 @@ export interface LocalWorkspaceSettings {
   aiProvider: AiProvider;
   aiBaseUrl: string;
   aiModel: string;
+  aiApiKey: string;
   ollamaBaseUrl?: string;
   ollamaModel?: string;
-  transcriptionProvider: "BROWSER" | "MANUAL" | "WHISPER";
+  transcriptionProvider: TranscriptionProvider;
   schedulerAlgorithm: SchedulerAlgorithm;
   reviewIntensity: ReviewIntensity;
   codeReviewFrequency: ReviewFrequency;
@@ -143,6 +145,8 @@ export interface LocalWorkspaceSettings {
   minimumIntervalDays: number;
   maximumCodingIntervalDays: number;
   maximumExplanationIntervalDays: number;
+  problemBankSyncEnabled: boolean;
+  problemBankSyncFilePath: string;
 }
 
 export interface ToolCommandStatus {
@@ -234,7 +238,7 @@ export interface ProblemBankExport {
     starterCode?: string | null;
     referenceSolution?: string | null;
     evaluationNotes?: string | null;
-    solutionVideoUrl: string;
+    solutionVideoUrl?: string | null;
     knowledgeRubric: string;
     createdAt: string;
     updatedAt: string;
@@ -258,4 +262,17 @@ export interface ProblemBankImportResult {
   updated: number;
   reviewStatesImported: number;
   submissionsImported: number;
+}
+
+export interface ProblemBankFileSyncStatus {
+  enabled: boolean;
+  filePath: string;
+  fileExists: boolean;
+  lastModifiedAt?: string | null;
+  fileSizeBytes?: number | null;
+  importInProgress: boolean;
+  lastImportedAt?: string | null;
+  lastImportSummary?: string | null;
+  lastError?: string | null;
+  synced: boolean;
 }

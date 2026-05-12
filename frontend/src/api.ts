@@ -7,6 +7,7 @@ import type {
   LocalToolingStatus,
   LocalWorkspaceSettings,
   ProblemBankExport,
+  ProblemBankFileSyncStatus,
   ProblemBankImportResult,
   ProblemRequest,
   ProblemSummary,
@@ -152,5 +153,21 @@ export function importProblemBank(payload: ProblemBankExport): Promise<ProblemBa
   return request("/api/problem-bank/import", {
     method: "POST",
     body: JSON.stringify(payload),
+  });
+}
+
+export function getProblemBankFileSyncStatus(): Promise<ProblemBankFileSyncStatus> {
+  return request("/api/problem-bank/file-sync/status");
+}
+
+export function writeProblemBankSyncFile(): Promise<ProblemBankFileSyncStatus> {
+  return request("/api/problem-bank/file-sync/export", {
+    method: "POST",
+  });
+}
+
+export function importProblemBankSyncFile(): Promise<ProblemBankFileSyncStatus> {
+  return request("/api/problem-bank/file-sync/import", {
+    method: "POST",
   });
 }

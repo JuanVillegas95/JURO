@@ -1,152 +1,56 @@
 # JURO
 
-JURO is a Java-only desktop study app for building and reviewing a personal coding-problem bank.
+JURO is a local desktop app for deliberate Java coding practice.
 
-It is designed for deliberate practice:
+The core idea is simple: JURO owns the study system, while your editor and your LLM do the heavy lifting. JURO stores a personal problem bank, opens each problem in a local Java workspace, runs the tests, records explanation practice, and schedules future reviews. An LLM can be connected to evaluate your explanations and can also be used to populate or maintain the problem bank.
 
-- collect and edit coding problems
-- launch each problem in a local VS Code workflow
-- generate Java scaffolds and runnable test cases
-- run deterministic Java tests from JURO
-- explain your solution and evaluate the transcript with a local AI provider
-- schedule future coding and explanation reviews with spaced repetition
+JURO is not an in-browser coding IDE. Coding happens locally in your preferred editor, such as VS Code or Neovim. JURO is the launcher, problem bank, test runner, explanation checker, and spaced-repetition scheduler.
 
-JURO is not an in-browser coding workspace. Coding happens in the local editor. JURO is the authoring tool, launcher, test runner, knowledge-check surface, and review scheduler.
+## What JURO Can Do
 
-## Current Production Target
+- Maintain a local Java problem bank.
+- Create and edit problems with descriptions, constraints, examples, test cases, starter code, reference solutions, solution videos, and knowledge rubrics.
+- Generate a local Java scaffold for the selected problem.
+- Open the scaffold in VS Code or Neovim.
+- Run deterministic Java tests from the desktop app.
+- Track coding review and explanation review separately.
+- Use an LLM to evaluate a written or spoken explanation.
+- Schedule future reviews with spaced repetition.
+- Export, import, and live-sync the problem bank as JSON.
+- Let an external LLM edit that JSON so problems can be created without hand-authoring every field in the UI.
 
-The primary production path is a macOS Tauri desktop app. JURO can also be built as a Linux AppImage for Manjaro and other Arch-based desktop distributions.
+## Ideal Workflow
 
-The desktop app packages:
+The intended workflow is:
 
-- React + Vite frontend
-- Spring Boot backend jar
-- H2 file database for local app data
-- local HTTP API started by Tauri on `127.0.0.1:18191`
+1. Connect an LLM provider in Settings.
+2. Use the LLM to create or expand your problem bank.
+3. Import or live-sync the generated JSON into JURO.
+4. Pick a problem from the Problem Bank.
+5. Open it in your preferred editor.
+6. Solve it in `src/Solution.java`.
+7. Return to JURO and run the tests.
+8. Explain your solution using text or speech.
+9. Let the configured LLM grade the explanation against the problem rubric.
+10. Mark the coding and explanation reviews as passed or needing work.
+11. Let JURO schedule the next review.
 
-When the app opens, Tauri starts the bundled Spring Boot backend as a child process. When the app closes, Tauri stops that backend process.
+This creates a loop where the LLM helps build the curriculum, but JURO keeps the practice deterministic: real files, real Java tests, and review state stored locally.
 
-## Requirements
+## LLM Integration
 
-To use the built desktop app:
+JURO currently supports these AI providers for explanation evaluation:
 
-- macOS, or Manjaro/Linux when using the AppImage build
-- Java 17 or newer
-- VS Code installed
-- VS Code `code` command available on PATH
-- optional: Ollama or Codex Adapter for AI knowledge checks
+- Ollama
+- Codex Adapter
+- Anthropic Claude
+- Anthropic Claude
 
-To build from source:
-
-- Node.js 22 or newer
-- npm
-- Rust and Cargo
-- Xcode Command Line Tools on macOS, or Tauri Linux system dependencies on Manjaro/Linux
-- Java 17 or newer
-
-## Install Built App
-
-JURO currently expects Java 17+ and VS Code to be installed on the user machine. The `code` command must also be available on `PATH` so JURO can open generated problem workspaces.
-
-### Manjaro / Linux
-
-Install runtime prerequisites:
-
-```bash
-sudo pacman -S jdk17-openjdk
-```
-
-Install VS Code from your preferred Manjaro source, then enable the `code` command from VS Code's command-line setup if it is not already on `PATH`.
-
-Install the JURO AppImage:
-
-1. Download the `JURO-*.AppImage` build artifact.
-2. Move it somewhere stable, such as `~/Applications/JURO.AppImage`.
-3. Make it executable.
-
-```bash
-mkdir -p ~/Applications
-mv ~/Downloads/JURO-*.AppImage ~/Applications/JURO.AppImage
-chmod +x ~/Applications/JURO.AppImage
-~/Applications/JURO.AppImage
-```
-
-Optional AI knowledge checks require a local AI provider such as Ollama or Codex Adapter. Configure the provider in JURO Settings after first launch.
-
-### macOS
-
-Install runtime prerequisites:
-
-```bash
-brew install openjdk@17
-```
-
-Install VS Code and make sure the `code` command is available from the shell. In VS Code, run `Shell Command: Install 'code' command in PATH` from the Command Palette if needed.
-
-Install the JURO app:
-
-1. Download the macOS `JURO.app` build artifact or `.dmg` release package.
-2. If using a `.dmg`, open it and drag `JURO.app` into `/Applications`.
-3. If using a raw `.app` bundle, move it into `/Applications`.
-4. Open JURO from Applications.
-
-If macOS Gatekeeper blocks an unsigned local build, open System Settings, go to Privacy & Security, and allow JURO from there. Production releases should be signed and notarized before distribution.
-
-## App Workflow
-
-1. Open JURO.
-2. Use the Problem Bank to pick a due or new Java problem.
-3. Click the problem action to open it in VS Code.
-4. JURO deletes and rebuilds the single current local Java scaffold.
-5. Implement the solution in `src/Solution.java`.
-6. Return to JURO and run the Java tests.
-7. Use Knowledge Check to record or type an explanation.
-8. Let Ollama or Codex Adapter evaluate the explanation.
-9. Mark the result as passed or needs review.
-10. JURO schedules the next coding and explanation reviews separately.
-
-## Problem Model
-
-Problems are Java-only and include:
-
-- title, difficulty, and tags
-- examples for understanding the prompt
-- runnable test cases for the scaffold
-- Java method signature and return type metadata
-- starter code
-- reference solution
-- optional solution video URL
-- knowledge rubric for AI explanation review
-
-Each problem must have at least three examples and at least three runnable test cases.
-
-## Review Scheduling
-
-JURO tracks two independent review schedules per problem:
-
-- Code: can you implement the solution and pass all tests?
-- Explain: can you explain the algorithm, edge cases, correctness, and complexity?
-
-The scheduler uses an SM-2 style spaced repetition algorithm inspired by SuperMemo and Anki. Passing a review increases the interval before the next review. Failing or marking a review as needing work brings the problem back sooner.
-
-Explanation reviews are scheduled more often than coding reviews by default because explaining is faster than fully reimplementing a solution.
-
-Scheduling behavior can be tuned in Settings.
-
-## AI Evaluation
-
-JURO supports two local AI provider modes.
+The LLM is used for knowledge checks. JURO sends the problem description, the knowledge rubric, and your explanation transcript to the configured provider. The provider returns structured feedback, and you decide whether to grade the explanation as passed or needing review.
 
 ### Ollama
 
-Recommended local setup:
-
-```bash
-ollama start
-ollama pull llama3.1
-```
-
-Use these settings in JURO:
+Use this if you want local models:
 
 ```text
 Provider: Ollama
@@ -156,13 +60,7 @@ Model: llama3.1
 
 ### Codex Adapter
 
-If you have the OCA API Adapter installed and running:
-
-```bash
-oca-api-adapter --host 127.0.0.1 --port 11435 --codex-home "$HOME/.codex"
-```
-
-Use these settings in JURO:
+Use this if you have an OpenAI-compatible local Codex adapter:
 
 ```text
 Provider: Codex Adapter
@@ -170,45 +68,136 @@ Base URL: http://127.0.0.1:11435/v1/
 Model: gpt-5.4
 ```
 
-The Codex Adapter is treated as an OpenAI-compatible local endpoint.
+### Anthropic Claude
 
-## Transcription
+Use this if you want to call Anthropic directly:
 
-Knowledge Check can use:
+```text
+Provider: Anthropic Claude
+Base URL: https://api.anthropic.com
+Model: claude-sonnet-4-20250514
+API key: your Anthropic API key
+```
 
-- Browser speech: uses browser speech recognition when the runtime supports it.
-- Manual text: type or paste the explanation yourself.
-- Whisper service: reserved for a separate local transcription service when configured.
+The API key is saved in JURO local settings on your machine.
 
-The AI evaluator always receives text. Speech features only create the transcript.
+## Populating Problems With an LLM
+
+The best way to use an LLM to create problems is through the Problem Bank JSON format.
+
+JURO has two JSON-based workflows:
+
+- Export/import: export the bank, ask an LLM to edit the JSON, then import it back.
+- Live JSON sync: configure one JSON file that JURO watches while the app is running.
+
+The live-sync workflow is the easiest for LLM-assisted authoring:
+
+1. Open Settings.
+2. Go to Problem Bank Backup.
+3. Enable Live JSON sync.
+4. Choose a file path, for example `~/juro-workspace/juro-problem-bank.json`.
+5. Click Write sync file.
+6. Open that JSON file in an editor or LLM tool.
+7. Ask the LLM to add, improve, or rewrite problems.
+8. Save the JSON file.
+9. JURO detects the change and imports it automatically.
+
+The LLM should preserve the JSON structure and create complete problems. Each problem needs:
+
+- `slug`
+- `title`
+- `summary`
+- `descriptionMarkdown`
+- `constraintsMarkdown`
+- `type` set to `JAVA`
+- `difficulty`
+- `starterCode`
+- `referenceSolution`
+- `solutionVideoUrl`
+- `knowledgeRubric`
+- at least 3 examples
+- at least 3 runnable test cases
+- review states
+- submissions array, usually empty for new problems
+
+Import matches by `slug`. If the slug already exists, JURO updates that problem. If the slug is new, JURO creates a new problem.
+
+## Prompt For Generating Problems
+
+Use a prompt like this with your LLM:
+
+```text
+You are editing a JURO problem bank JSON file.
+
+Add 5 Java algorithm problems.
+
+Rules:
+- Preserve the existing top-level JSON shape.
+- Do not remove existing problems.
+- Each new problem must have a unique slug.
+- Set type to JAVA.
+- Include at least 3 examples.
+- Include at least 3 runnable test cases.
+- Test case inputData and expectedOutput must be valid JSON strings.
+- Include starterCode with an empty or incomplete Java solve method.
+- Include referenceSolution with a correct Java implementation.
+- Include a knowledgeRubric that explains what a strong verbal explanation must cover.
+- Set submissions to [] for new problems.
+- Include CODING and EXPLANATION review states.
+
+Create problems that are useful for spaced repetition and interview preparation.
+```
+
+After saving the edited JSON, JURO will import it through live sync if that feature is enabled.
+
+## Problem Model
+
+JURO problems are Java-only for now.
+
+A problem contains prompt content, runnable examples, hidden or visible test cases, code templates, a reference solution, and a rubric for explanation review. The tests are used for coding review. The rubric is used by the LLM for explanation review.
+
+Coding review and explanation review are separate because they train different skills:
+
+- Coding review asks: can you implement the solution and pass the tests?
+- Explanation review asks: can you explain the algorithm, edge cases, correctness, and complexity?
 
 ## Local Data
 
-The desktop backend runs with the `desktop` Spring profile and stores data locally.
+JURO stores data locally.
 
-Default desktop backend settings:
+In desktop mode, the Tauri shell starts a Spring Boot backend on:
 
 ```text
-API: http://127.0.0.1:18191
-Database: H2 file database
-Settings file: app data directory / backend / settings.json
-Backend logs: app log directory / juro-backend.log
-Backend error logs: app log directory / juro-backend-error.log
+http://127.0.0.1:18191
 ```
 
-JURO uses one generated scaffold workspace at `workspace-directory/juro-current`. Opening another problem deletes and rebuilds that folder for the newly selected problem.
+The backend stores app data in an H2 file database. The database file is not meant to be edited directly. Use the app UI, the API, import/export JSON, or live JSON sync instead.
 
-## Problem Bank Backup
+JURO also creates one generated workspace at:
 
-Settings includes Problem Bank Backup controls.
+```text
+workspace-directory/juro-current
+```
 
-- Export bank downloads a JSON snapshot.
-- Import bank restores a JSON snapshot.
-- The snapshot includes problems, examples, runnable test cases, starter/reference code, knowledge rubrics, coding and explanation review schedules, due dates, spaced repetition progress, and submission history.
-- Import matches problems by slug. Existing problems are updated; new slugs are created.
-- For imported problems, review schedules and submission history are replaced with the snapshot data so repeated imports do not duplicate progress.
+Opening a different problem deletes and rebuilds that folder for the selected problem.
 
-## Build From Source
+## Requirements
+
+To use JURO:
+
+- Java 17 or newer
+- VS Code with the `code` command available on PATH, or Neovim with `nvim` available on PATH
+- optional LLM provider: Ollama, Codex Adapter, or Anthropic Claude
+
+To build JURO from source:
+
+- Node.js 22 or newer
+- npm
+- Rust and Cargo
+- Java 17 or newer
+- Tauri platform dependencies for your OS
+
+## Run From Source
 
 Install frontend dependencies:
 
@@ -224,53 +213,9 @@ cd frontend
 npm run tauri:dev
 ```
 
-The Tauri dev command packages the backend jar, starts the frontend dev server, and launches the desktop shell.
+The Tauri dev command packages the Spring Boot backend, starts the frontend dev server, launches the desktop shell, and starts the backend on `127.0.0.1:18191`.
 
-## Production Build
-
-Build the macOS app bundle:
-
-```bash
-cd frontend
-npm run tauri -- build --bundles app
-```
-
-The app bundle is produced at:
-
-```text
-frontend/src-tauri/target/release/bundle/macos/JURO.app
-```
-
-Build a Manjaro/Linux AppImage:
-
-```bash
-cd frontend
-npm run tauri:build:manjaro
-```
-
-The AppImage is produced under:
-
-```text
-frontend/src-tauri/target/release/bundle/appimage/
-```
-
-Run the Manjaro build on a Linux machine with the normal Tauri Linux system dependencies installed, plus Node.js, npm, Rust, Cargo, and Java 17+.
-
-The build process:
-
-1. packages the Spring Boot backend jar
-2. builds the React frontend with `VITE_API_BASE_URL=http://127.0.0.1:18191`
-3. copies the backend jar into the Tauri app resources
-4. creates the selected desktop bundle
-
-Build the native executable without an app bundle:
-
-```bash
-cd frontend
-npm run tauri -- build --no-bundle
-```
-
-## Verification Commands
+## Verification
 
 Run backend tests:
 
@@ -279,67 +224,24 @@ cd backend
 MAVEN_OPTS='-Djava.io.tmpdir=../.tmp' TMPDIR=../.tmp mvn -s ../.mvn/public-settings.xml -Dmaven.repo.local=../.m2repo test
 ```
 
-Run the frontend production build used by Tauri:
+Run the frontend build:
 
 ```bash
 cd frontend
-npm run build:tauri
+npm run build
 ```
-
-Build the desktop bundle:
-
-```bash
-cd frontend
-npm run tauri -- build --bundles app
-```
-
-Build the Manjaro/Linux AppImage:
-
-```bash
-cd frontend
-npm run tauri:build:manjaro
-```
-
-## Production Release Checklist
-
-Before distributing JURO to other users:
-
-- set final app name, version, identifier, and icon in `frontend/src-tauri/tauri.conf.json`
-- decide whether to bundle a JRE or require users to install Java 17+
-- create a signed macOS build
-- notarize the app with Apple
-- package the app as a `.dmg`
-- document the first-run setup for VS Code, Java, and the optional AI provider
-- add an update channel if automatic updates are needed
-
-Current limitation: the app still expects Java 17+ to exist on the user machine. For the cleanest end-user install, the next production hardening step is bundling or installing a known Java runtime.
 
 ## Project Structure
 
 ```text
 backend/
-  Spring Boot API, Java scaffold generation, test running, AI evaluation,
-  review scheduling, local settings, and persistence.
+  Spring Boot API, H2 persistence, Java scaffold generation, test running,
+  AI evaluation, review scheduling, settings, and problem-bank import/export.
 
 frontend/
-  React + TypeScript UI, Problem Bank, Settings, Knowledge Check,
-  local workspace controls, and Tauri desktop shell.
+  React + TypeScript UI for the Problem Bank, Settings, Knowledge Check,
+  local workspace controls, and authoring flows.
 
 frontend/src-tauri/
-  Tauri app configuration and Rust launcher that starts/stops the backend.
-```
-
-## Useful Local URLs
-
-Desktop backend:
-
-```text
-http://127.0.0.1:18191
-```
-
-Common local AI endpoints:
-
-```text
-http://localhost:11434
-http://127.0.0.1:11435/v1/
+  Tauri desktop shell and Rust launcher that starts/stops the backend.
 ```

@@ -10,7 +10,7 @@ create table problems (
     starter_code text,
     reference_solution text,
     evaluation_notes text,
-    solution_video_url text not null,
+    solution_video_url text,
     knowledge_rubric text not null,
     created_at timestamp with time zone not null,
     updated_at timestamp with time zone not null

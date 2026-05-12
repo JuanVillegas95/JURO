@@ -7,6 +7,7 @@ public record LocalWorkspaceSettings(
         String aiProvider,
         String aiBaseUrl,
         String aiModel,
+        String aiApiKey,
         String ollamaBaseUrl,
         String ollamaModel,
         String transcriptionProvider,
@@ -17,16 +18,20 @@ public record LocalWorkspaceSettings(
         String practiceFocus,
         int minimumIntervalDays,
         int maximumCodingIntervalDays,
-        int maximumExplanationIntervalDays
+        int maximumExplanationIntervalDays,
+        boolean problemBankSyncEnabled,
+        String problemBankSyncFilePath
 ) {
     public static LocalWorkspaceSettings defaults() {
+        String workspaceDirectory = defaultWorkspaceDirectory();
         return new LocalWorkspaceSettings(
-                defaultWorkspaceDirectory(),
+                workspaceDirectory,
                 "VS_CODE",
                 "",
                 "OLLAMA",
                 defaultOllamaBaseUrl(),
                 defaultOllamaModel(),
+                "",
                 defaultOllamaBaseUrl(),
                 defaultOllamaModel(),
                 "BROWSER",
@@ -37,7 +42,9 @@ public record LocalWorkspaceSettings(
                 "BALANCED",
                 1,
                 180,
-                90
+                90,
+                false,
+                workspaceDirectory + "/juro-problem-bank.json"
         );
     }
 
@@ -64,6 +71,18 @@ public record LocalWorkspaceSettings(
 
     static String defaultCodexAdapterModel() {
         return envOrDefault("JURO_CODEX_ADAPTER_MODEL", "gpt-5.4");
+    }
+
+    static String defaultAnthropicBaseUrl() {
+        return envOrDefault("JURO_ANTHROPIC_BASE_URL", "https://api.anthropic.com");
+    }
+
+    static String defaultAnthropicModel() {
+        return envOrDefault("JURO_ANTHROPIC_MODEL", "claude-sonnet-4-20250514");
+    }
+
+    static String defaultAnthropicApiKey() {
+        return envOrDefault("JURO_ANTHROPIC_API_KEY", "");
     }
 
     private static String envOrDefault(String name, String fallback) {

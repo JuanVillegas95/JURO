@@ -65,6 +65,7 @@ class ReviewScheduleCalculatorTest {
                 defaults.aiProvider(),
                 defaults.aiBaseUrl(),
                 defaults.aiModel(),
+                defaults.aiApiKey(),
                 defaults.ollamaBaseUrl(),
                 defaults.ollamaModel(),
                 defaults.transcriptionProvider(),
@@ -75,7 +76,9 @@ class ReviewScheduleCalculatorTest {
                 practiceFocus,
                 minimumIntervalDays,
                 maximumCodingIntervalDays,
-                maximumExplanationIntervalDays
+                maximumExplanationIntervalDays,
+                defaults.problemBankSyncEnabled(),
+                defaults.problemBankSyncFilePath()
         );
     }
 }

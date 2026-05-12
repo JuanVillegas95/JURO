@@ -7,6 +7,7 @@ import {
   createProblemScaffold,
   deleteProblem as deleteProblemApi,
   getActiveLocalWorkspace,
+  getProblemBankFileSyncStatus,
   listProblems,
   openProblemInEditor,
   recordReviewResult,
@@ -17,6 +18,7 @@ import type {
   LocalProblemRunResult,
   LocalProblemWorkspace,
   LocalWorkspaceSettings,
+  ProblemBankFileSyncStatus,
   ProblemDifficulty,
   ReviewState,
   ProblemSummary,
@@ -86,6 +88,19 @@ function useResponsivePageSize() {
   return pageSize;
 }
 
+function catalogFileSyncLabel(status: ProblemBankFileSyncStatus) {
+  if (status.importInProgress) {
+    return "JSON syncing";
+  }
+  if (status.lastError) {
+    return "JSON sync error";
+  }
+  if (status.synced) {
+    return "JSON synced";
+  }
+  return "JSON watching";
+}
+
 type ReviewFilter = "ALL" | "DUE" | "CODE_DUE" | "EXPLANATION_DUE" | "NEW" | "MASTERED";
 type ActionMenuPosition = { left: number; top: number; width: number };
 
@@ -109,6 +124,7 @@ export function ProblemListPage() {
   const [lastRunResult, setLastRunResult] = useState<LocalProblemRunResult | null>(null);
   const [lastKnowledgeResult, setLastKnowledgeResult] = useState<KnowledgeEvaluationResult | null>(null);
   const [knowledgeProblem, setKnowledgeProblem] = useState<ProblemSummary | null>(null);
+  const [fileSyncStatus, setFileSyncStatus] = useState<ProblemBankFileSyncStatus | null>(null);
   const [localActionError, setLocalActionError] = useState<string | null>(null);
   const [busyLocalAction, setBusyLocalAction] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -150,6 +166,44 @@ export function ProblemListPage() {
       active = false;
     };
   }, [refreshToken]);
+
+  useEffect(() => {
+    let active = true;
+    let lastSeenImportedAt: string | null = null;
+
+    async function refreshFileSyncStatus() {
+      try {
+        const status = await getProblemBankFileSyncStatus();
+        if (!active) {
+          return;
+        }
+        setFileSyncStatus(status);
+        if (!status.enabled || !status.lastImportedAt) {
+          return;
+        }
+        if (lastSeenImportedAt === null) {
+          lastSeenImportedAt = status.lastImportedAt;
+          setRefreshToken((current) => current + 1);
+          return;
+        }
+        if (status.lastImportedAt !== lastSeenImportedAt) {
+          lastSeenImportedAt = status.lastImportedAt;
+          setRefreshToken((current) => current + 1);
+        }
+      } catch {
+        if (active) {
+          setFileSyncStatus(null);
+        }
+      }
+    }
+
+    void refreshFileSyncStatus();
+    const interval = window.setInterval(refreshFileSyncStatus, 2500);
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+    };
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -627,18 +681,20 @@ export function ProblemListPage() {
               <Mic size={14} />
               Knowledge Check
             </button>
-            <button
-              className="action-menu__item"
-              onClick={(event) => {
-                event.stopPropagation();
-                openSolutionVideo(activeActionMenuProblem);
-              }}
-              role="menuitem"
-              type="button"
-            >
-              <ExternalLink size={14} />
-              Solution
-            </button>
+            {activeActionMenuProblem.solutionVideoUrl ? (
+              <button
+                className="action-menu__item"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  openSolutionVideo(activeActionMenuProblem);
+                }}
+                role="menuitem"
+                type="button"
+              >
+                <ExternalLink size={14} />
+                Solution
+              </button>
+            ) : null}
             <button
               className="action-menu__item"
               onClick={(event) => {
@@ -713,6 +769,20 @@ export function ProblemListPage() {
               />
             </label>
             <div className="catalog-toolbar__meta">
+              {fileSyncStatus?.enabled ? (
+                <div
+                  className={`catalog-sync-status${
+                    fileSyncStatus.lastError
+                      ? " catalog-sync-status--error"
+                      : fileSyncStatus.synced
+                        ? " catalog-sync-status--ok"
+                        : ""
+                  }`}
+                  title={fileSyncStatus.lastError ?? fileSyncStatus.filePath}
+                >
+                  {catalogFileSyncLabel(fileSyncStatus)}
+                </div>
+              ) : null}
               <button aria-label="New Problem" className="new-problem-button" onClick={openNewProblemModal} type="button">
                 <Plus size={15} strokeWidth={2.4} />
                 <span>New Problem</span>

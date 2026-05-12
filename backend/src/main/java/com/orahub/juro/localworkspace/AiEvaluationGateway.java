@@ -42,6 +42,9 @@ public class AiEvaluationGateway {
         if ("CODEX_ADAPTER".equals(provider)) {
             return "Codex Adapter";
         }
+        if ("ANTHROPIC".equals(provider)) {
+            return "Anthropic";
+        }
 
         return "Ollama";
     }

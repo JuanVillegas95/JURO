@@ -58,7 +58,7 @@ public class Problem {
     @Column(columnDefinition = "text")
     private String evaluationNotes;
 
-    @Column(nullable = false, columnDefinition = "text")
+    @Column(columnDefinition = "text")
     private String solutionVideoUrl;
 
     @Column(nullable = false, columnDefinition = "text")

@@ -560,6 +560,33 @@ textarea {
   gap: 0.75rem;
 }
 
+.catalog-sync-status {
+  max-width: 8.8rem;
+  overflow: hidden;
+  padding: 0.34rem 0.56rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+  font-weight: 800;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.catalog-sync-status--ok {
+  border-color: rgba(22, 163, 74, 0.26);
+  background: rgba(22, 163, 74, 0.08);
+  color: #15803d;
+}
+
+.catalog-sync-status--error {
+  border-color: rgba(220, 38, 38, 0.26);
+  background: rgba(220, 38, 38, 0.08);
+  color: #b91c1c;
+}
+
 .new-problem-button {
   display: inline-flex;
   align-items: center;
@@ -1302,6 +1329,28 @@ textarea {
   display: flex;
   flex-wrap: wrap;
   gap: 0.55rem;
+}
+
+.settings-sync-group {
+  display: grid;
+  gap: 0.62rem;
+  padding-top: 0.18rem;
+}
+
+.settings-toggle-row {
+  display: inline-flex;
+  width: fit-content;
+  align-items: center;
+  gap: 0.48rem;
+  color: var(--text-primary);
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.settings-toggle-row input {
+  width: 1rem;
+  height: 1rem;
+  accent-color: var(--accent-blue-strong);
 }
 
 .settings-file-input {

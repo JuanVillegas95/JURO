@@ -46,6 +46,7 @@ public class LocalSettingsService {
                 request.aiProvider(),
                 request.aiBaseUrl(),
                 request.aiModel(),
+                request.aiApiKey(),
                 request.ollamaBaseUrl(),
                 request.ollamaModel(),
                 request.transcriptionProvider(),
@@ -56,7 +57,9 @@ public class LocalSettingsService {
                 request.practiceFocus(),
                 request.minimumIntervalDays() == null ? defaults.minimumIntervalDays() : request.minimumIntervalDays(),
                 request.maximumCodingIntervalDays() == null ? defaults.maximumCodingIntervalDays() : request.maximumCodingIntervalDays(),
-                request.maximumExplanationIntervalDays() == null ? defaults.maximumExplanationIntervalDays() : request.maximumExplanationIntervalDays()
+                request.maximumExplanationIntervalDays() == null ? defaults.maximumExplanationIntervalDays() : request.maximumExplanationIntervalDays(),
+                request.problemBankSyncEnabled() != null && request.problemBankSyncEnabled(),
+                request.problemBankSyncFilePath()
         ), true);
 
         try {
@@ -74,9 +77,9 @@ public class LocalSettingsService {
         String editor = textOrDefault(settings.editor(), defaults.editor()).toUpperCase(Locale.ROOT);
         String customEditorCommand = textOrDefault(settings.customEditorCommand(), "");
         String aiProvider = textOrDefault(settings.aiProvider(), defaults.aiProvider()).toUpperCase(Locale.ROOT);
-        if (!aiProvider.equals("OLLAMA") && !aiProvider.equals("CODEX_ADAPTER")) {
+        if (!aiProvider.equals("OLLAMA") && !aiProvider.equals("CODEX_ADAPTER") && !aiProvider.equals("ANTHROPIC")) {
             if (strictSchedulingValidation) {
-                throw new IllegalArgumentException("aiProvider must be OLLAMA or CODEX_ADAPTER.");
+                throw new IllegalArgumentException("aiProvider must be OLLAMA, CODEX_ADAPTER, or ANTHROPIC.");
             }
             aiProvider = defaults.aiProvider();
         }
@@ -94,6 +97,9 @@ public class LocalSettingsService {
                         ? legacyOllamaModel
                         : defaultAiModel(aiProvider)
         );
+        String aiApiKey = "ANTHROPIC".equals(aiProvider)
+                ? textOrDefault(settings.aiApiKey(), LocalWorkspaceSettings.defaultAnthropicApiKey())
+                : textOrDefault(settings.aiApiKey(), "");
         String ollamaBaseUrl = aiProvider.equals("OLLAMA")
                 ? aiBaseUrl
                 : textOrDefault(settings.ollamaBaseUrl(), defaults.ollamaBaseUrl());
@@ -115,18 +121,22 @@ public class LocalSettingsService {
         int minimumIntervalDays = positiveOrDefault(settings.minimumIntervalDays(), defaults.minimumIntervalDays());
         int maximumCodingIntervalDays = positiveOrDefault(settings.maximumCodingIntervalDays(), defaults.maximumCodingIntervalDays());
         int maximumExplanationIntervalDays = positiveOrDefault(settings.maximumExplanationIntervalDays(), defaults.maximumExplanationIntervalDays());
+        boolean problemBankSyncEnabled = settings.problemBankSyncEnabled();
+        String problemBankSyncFilePath = textOrDefault(settings.problemBankSyncFilePath(), defaults.problemBankSyncFilePath());
 
-        if (!editor.equals("VS_CODE")) {
+        if (!editor.equals("VS_CODE") && !editor.equals("NVIM")) {
             if (strictSchedulingValidation) {
-                throw new IllegalArgumentException("editor must be VS_CODE. JURO currently supports only the dedicated VS Code workflow.");
+                throw new IllegalArgumentException("editor must be VS_CODE or NVIM.");
             }
             editor = defaults.editor();
         }
         customEditorCommand = "";
 
         if (!transcriptionProvider.equals("BROWSER")
-                && !transcriptionProvider.equals("MANUAL")
-                && !transcriptionProvider.equals("WHISPER")) {
+                && !transcriptionProvider.equals("MANUAL")) {
+            if (strictSchedulingValidation) {
+                throw new IllegalArgumentException("transcriptionProvider must be BROWSER or MANUAL.");
+            }
             transcriptionProvider = defaults.transcriptionProvider();
         }
 
@@ -192,6 +202,10 @@ public class LocalSettingsService {
             maximumExplanationIntervalDays = defaults.maximumExplanationIntervalDays();
         }
 
+        if (problemBankSyncEnabled && problemBankSyncFilePath.isBlank() && strictSchedulingValidation) {
+            throw new IllegalArgumentException("problemBankSyncFilePath is required when problem bank JSON sync is enabled.");
+        }
+
         return new LocalWorkspaceSettings(
                 workspaceDirectory,
                 editor,
@@ -199,6 +213,7 @@ public class LocalSettingsService {
                 aiProvider,
                 aiBaseUrl,
                 aiModel,
+                aiApiKey,
                 ollamaBaseUrl,
                 ollamaModel,
                 transcriptionProvider,
@@ -209,13 +224,18 @@ public class LocalSettingsService {
                 practiceFocus,
                 minimumIntervalDays,
                 maximumCodingIntervalDays,
-                maximumExplanationIntervalDays
+                maximumExplanationIntervalDays,
+                problemBankSyncEnabled,
+                problemBankSyncFilePath
         );
     }
 
     private String defaultAiBaseUrl(String provider) {
         if ("CODEX_ADAPTER".equals(provider)) {
             return LocalWorkspaceSettings.defaultCodexAdapterBaseUrl();
+        }
+        if ("ANTHROPIC".equals(provider)) {
+            return LocalWorkspaceSettings.defaultAnthropicBaseUrl();
         }
 
         return LocalWorkspaceSettings.defaultOllamaBaseUrl();
@@ -224,6 +244,9 @@ public class LocalSettingsService {
     private String defaultAiModel(String provider) {
         if ("CODEX_ADAPTER".equals(provider)) {
             return LocalWorkspaceSettings.defaultCodexAdapterModel();
+        }
+        if ("ANTHROPIC".equals(provider)) {
+            return LocalWorkspaceSettings.defaultAnthropicModel();
         }
 
         return LocalWorkspaceSettings.defaultOllamaModel();

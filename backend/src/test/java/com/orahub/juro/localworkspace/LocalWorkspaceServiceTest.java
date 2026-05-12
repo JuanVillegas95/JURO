@@ -86,6 +86,7 @@ class LocalWorkspaceServiceTest {
                 defaults.aiProvider(),
                 defaults.aiBaseUrl(),
                 defaults.aiModel(),
+                defaults.aiApiKey(),
                 defaults.ollamaBaseUrl(),
                 defaults.ollamaModel(),
                 defaults.transcriptionProvider(),
@@ -96,7 +97,9 @@ class LocalWorkspaceServiceTest {
                 defaults.practiceFocus(),
                 defaults.minimumIntervalDays(),
                 defaults.maximumCodingIntervalDays(),
-                defaults.maximumExplanationIntervalDays()
+                defaults.maximumExplanationIntervalDays(),
+                defaults.problemBankSyncEnabled(),
+                defaults.problemBankSyncFilePath()
         ));
         return settingsService;
     }

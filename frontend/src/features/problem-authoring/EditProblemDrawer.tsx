@@ -62,14 +62,13 @@ export function EditProblemDrawer({ mode, onClose, onSaved, problem }: EditProbl
     Boolean(returnType),
     tags.length > 0,
     description.trim().length > 0,
-    solutionVideoUrl.trim().length > 0,
     knowledgeRubric.trim().length >= 50,
     examples.length >= 3,
     starterCode.trim().length > 0,
     referenceSolution.trim().length > 0,
     testCases.length >= 3,
   ].filter(Boolean).length;
-  const completionPercent = Math.round((filledCompletionItems / 14) * 100);
+  const completionPercent = Math.round((filledCompletionItems / 13) * 100);
   const exampleRequirementMet = examples.length >= 3;
   const testCaseRequirementMet = testCases.length >= 3;
   const referenceRequirementMet = referenceSolution.includes("return");
@@ -330,7 +329,6 @@ export function EditProblemDrawer({ mode, onClose, onSaved, problem }: EditProbl
   const readinessItems = [
     { label: "Title", complete: !rootFieldError("title") },
     { label: "Difficulty", complete: !rootFieldError("difficulty") },
-    { label: "Solution video", complete: !rootFieldError("solutionVideoUrl") },
     { label: "Knowledge rubric", complete: !rootFieldError("knowledgeRubric") },
     { label: "At least 3 examples", complete: exampleRequirementMet && !rootFieldError("examples") },
     { label: "At least 3 test cases", complete: testCaseRequirementMet && !rootFieldError("testCases") },
@@ -429,13 +427,13 @@ export function EditProblemDrawer({ mode, onClose, onSaved, problem }: EditProbl
       >
         <button
           aria-label={`Close ${dialogTitle.toLowerCase()}`}
-          className="absolute left-3 top-3 z-10 inline-flex h-11 w-11 items-center justify-center rounded-lg bg-[var(--bg-card)] text-[var(--text-secondary)] shadow-sm ring-1 ring-[var(--border)] transition hover:bg-[var(--bg-elevated)] hover:text-[var(--text-primary)] focus:outline-none focus:ring-2 focus:ring-[#3B82F6]/35 md:h-8 md:w-8"
+          className="absolute right-3 top-3 z-10 inline-flex h-11 w-11 items-center justify-center rounded-lg bg-[var(--bg-card)] text-[var(--text-secondary)] shadow-sm ring-1 ring-[var(--border)] transition hover:bg-[var(--bg-elevated)] hover:text-[var(--text-primary)] focus:outline-none focus:ring-2 focus:ring-[#3B82F6]/35 md:h-8 md:w-8"
           onClick={onClose}
           type="button"
         >
           <X size={20} strokeWidth={2.25} />
         </button>
-        <header className="relative flex h-16 items-center justify-between border-b border-[var(--border)] px-5 pl-16 md:h-14 md:pl-14">
+        <header className="relative flex h-16 items-center justify-between border-b border-[var(--border)] px-5 pr-16 md:h-14 md:pr-14">
           <div className="flex min-w-0 items-center gap-2">
             <h2 className="truncate text-[20px] font-bold tracking-[-0.01em] text-[var(--text-primary)]">{dialogTitle}</h2>
             <span className="shrink-0 rounded-full bg-blue-50 px-2.5 py-1 text-[12px] font-bold text-[#3B82F6]">
@@ -585,7 +583,7 @@ export function EditProblemDrawer({ mode, onClose, onSaved, problem }: EditProbl
               <FieldError message={rootFieldError("description")} />
 
               <label className="grid gap-1.5">
-                <span className="text-[13px] font-semibold text-slate-500">Solution video</span>
+                <span className="text-[13px] font-semibold text-slate-500">Solution video (optional)</span>
                 <input
                   aria-label="Solution video URL"
                   className="!h-10 !w-full !rounded-lg !border !border-slate-300 !bg-white !px-3 !py-0 text-[14px] !text-slate-950 !shadow-none outline-none transition placeholder:text-slate-400 focus:!border-[#3B82F6] focus:!ring-4 focus:!ring-[#3B82F6]/15"
@@ -594,7 +592,7 @@ export function EditProblemDrawer({ mode, onClose, onSaved, problem }: EditProbl
                   onChange={(event) => setSolutionVideoUrl(event.target.value)}
                 />
                 <span className="text-[12px] font-medium text-slate-500">
-                  Link to the explanation or walkthrough video.
+                  Optional YouTube explanation or walkthrough link.
                 </span>
                 <FieldError message={rootFieldError("solutionVideoUrl")} />
               </label>

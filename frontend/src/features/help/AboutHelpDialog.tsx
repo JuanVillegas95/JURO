@@ -68,7 +68,7 @@ export function AboutHelpDialog({ onClose }: AboutHelpDialogProps) {
           <HelpSection title="How Coding Practice Works">
             <ul>
               <li>Choose a problem from the Problem Bank.</li>
-              <li>JURO creates a local scaffold and opens it in your preferred editor, usually VS Code.</li>
+              <li>JURO creates a local scaffold and opens it in your preferred editor, such as VS Code or Neovim.</li>
               <li>Write the solution locally, return to JURO, and run the tests.</li>
               <li>Use the result to grade the coding review.</li>
             </ul>
@@ -78,7 +78,7 @@ export function AboutHelpDialog({ onClose }: AboutHelpDialogProps) {
             <ul>
               <li>Open the Knowledge Check for a problem.</li>
               <li>Record or type your explanation of the approach, edge cases, and complexity.</li>
-              <li>JURO can transcribe with browser speech recognition, then send the text to Ollama or Codex Adapter.</li>
+              <li>JURO can transcribe with browser speech recognition, then send the text to the configured AI provider.</li>
               <li>The AI gives feedback, but you decide whether the explanation passed or needs review.</li>
             </ul>
           </HelpSection>
@@ -98,7 +98,7 @@ export function AboutHelpDialog({ onClose }: AboutHelpDialogProps) {
             <ul>
               <li>Choose the workspace folder where JURO rebuilds the current local problem scaffold.</li>
               <li>Select your preferred editor and check Java tooling status.</li>
-              <li>Configure Ollama or Codex Adapter as the local AI evaluator.</li>
+              <li>Configure Ollama, Codex Adapter, or Anthropic Claude as the AI evaluator.</li>
               <li>Use browser speech recognition for transcription, with manual text as the fallback.</li>
             </ul>
           </HelpSection>
