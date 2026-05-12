@@ -469,9 +469,9 @@ public class LocalWorkspaceService {
         }
 
         return List.of(
-                "sh",
-                "-lc",
-                "cd " + shellQuote(scaffoldPath) + " && exec \"${TERMINAL:-x-terminal-emulator}\" -e nvim ."
+                "kitty",
+                "--working-directory", scaffoldPath,
+                "nvim", "."
         );
     }
 
