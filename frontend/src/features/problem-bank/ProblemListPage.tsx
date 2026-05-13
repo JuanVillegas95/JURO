@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { CircleHelp, ExternalLink, FolderCode, Mic, MoreVertical, Pencil, Play, Plus, RefreshCw, Settings, Trash2 } from 'lucide-react';
+import type { RefObject } from 'react';
+import { CircleHelp, ExternalLink, FolderCode, Mic, MoreVertical, Pencil, Play, Plus, RefreshCw, Search, Settings, Trash2, X } from 'lucide-react';
 import { ThemeToggleButton } from '../../app/theme';
 import {
   clearActiveLocalWorkspace,
@@ -54,36 +55,66 @@ import {
   type SortPreset,
 } from './catalog';
 
-function getResponsivePageSize() {
+function getResponsivePageSize(tableBodyHeight?: number) {
   if (typeof window === "undefined") {
-    return 8;
+    return 12;
   }
 
   const { innerHeight, innerWidth } = window;
+  const rowHeight = innerWidth < 768 ? 148 : 56;
+  const fallbackChrome = innerWidth < 768 ? 220 : 96;
+  const availableHeight = tableBodyHeight && tableBodyHeight > 0 ? tableBodyHeight : innerHeight - fallbackChrome;
+  const availableRows = Math.ceil(Math.max(0, availableHeight) / rowHeight) + 1;
+  const minimumRows = innerWidth < 768 ? 4 : innerWidth < 1024 ? 8 : 10;
+  const maximumRows = innerWidth < 768 ? 12 : 40;
 
-  if (innerWidth < 768) {
-    return 4;
-  }
-
-  const verticalChrome = innerWidth < 1024 ? 360 : 334;
-  const rowHeight = 56;
-  const availableRows = Math.floor((innerHeight - verticalChrome) / rowHeight);
-
-  return Math.min(16, Math.max(innerWidth < 1024 ? 5 : 6, availableRows));
+  return Math.min(maximumRows, Math.max(minimumRows, availableRows));
 }
 
-function useResponsivePageSize() {
-  const [pageSize, setPageSize] = useState(getResponsivePageSize);
+function useResponsivePageSize(tableBodyRef: RefObject<HTMLDivElement | null>) {
+  const [pageSize, setPageSize] = useState(() => getResponsivePageSize());
 
   useEffect(() => {
-    function handleResize() {
-      setPageSize(getResponsivePageSize());
+    let animationFrame: number | null = null;
+
+    function updatePageSize(tableBodyHeight?: number) {
+      if (animationFrame !== null) {
+        window.cancelAnimationFrame(animationFrame);
+      }
+
+      animationFrame = window.requestAnimationFrame(() => {
+        const nextPageSize = getResponsivePageSize(tableBodyHeight ?? tableBodyRef.current?.clientHeight);
+        setPageSize((currentPageSize) => (currentPageSize === nextPageSize ? currentPageSize : nextPageSize));
+        animationFrame = null;
+      });
     }
 
-    handleResize();
+    function handleResize() {
+      updatePageSize();
+    }
+
+    updatePageSize();
     window.addEventListener("resize", handleResize);
-    return () => window.removeEventListener("resize", handleResize);
-  }, []);
+    const tableBody = tableBodyRef.current;
+    const resizeObserver =
+      tableBody && typeof ResizeObserver !== "undefined"
+        ? new ResizeObserver((entries) => {
+            updatePageSize(entries[0]?.contentRect.height);
+          })
+        : null;
+
+    if (tableBody && resizeObserver) {
+      resizeObserver.observe(tableBody);
+    }
+
+    return () => {
+      window.removeEventListener("resize", handleResize);
+      resizeObserver?.disconnect();
+      if (animationFrame !== null) {
+        window.cancelAnimationFrame(animationFrame);
+      }
+    };
+  }, [tableBodyRef]);
 
   return pageSize;
 }
@@ -108,8 +139,305 @@ const actionMenuWidth = 176;
 const actionMenuViewportGap = 8;
 const actionMenuTriggerGap = 6;
 
+type MockProblemStatus = "solved" | "attempted" | "not_started";
+type MockReviewKind = "due" | "new" | "up_to_date";
+
+function mockReviewState(
+  track: ReviewState["track"],
+  kind: MockReviewKind,
+  priorityScore: number,
+  lastResult?: ReviewState["lastResult"],
+): ReviewState {
+  const status: ReviewState["status"] = kind === "due" ? "DUE" : kind === "new" ? "NEW" : "REVIEW";
+  return {
+    track,
+    status,
+    dueAt: kind === "due" ? "2026-05-01T10:00:00.000Z" : kind === "new" ? "2026-05-25T10:00:00.000Z" : "2026-07-01T10:00:00.000Z",
+    lastReviewedAt: kind === "new" ? null : "2026-04-20T10:00:00.000Z",
+    intervalDays: kind === "due" ? 1 : kind === "new" ? 0 : 21,
+    easeFactor: 2.5,
+    repetitions: lastResult ? 2 : 0,
+    lapses: lastResult === "FAILED" ? 1 : 0,
+    lastResult,
+    priorityScore,
+  };
+}
+
+function mockCodingResult(status: MockProblemStatus): ReviewState["lastResult"] {
+  if (status === "solved") {
+    return "PASSED";
+  }
+  if (status === "attempted") {
+    return "FAILED";
+  }
+  return null;
+}
+
+function mockProblem(
+  index: number,
+  values: {
+    title: string;
+    summary: string;
+    type: ProblemType;
+    difficulty: ProblemDifficulty;
+    status: MockProblemStatus;
+    codingReview: MockReviewKind;
+    explanationReview: MockReviewKind;
+    avgTimeMinutes: number;
+    updatedAt: string;
+  },
+): ProblemSummary {
+  const codingResult = mockCodingResult(values.status);
+  const slug = values.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  return {
+    id: `mock-problem-${index + 1}`,
+    slug,
+    title: values.title,
+    summary: values.summary,
+    type: values.type,
+    difficulty: values.difficulty,
+    avgTimeMinutes: values.avgTimeMinutes,
+    exampleCount: 3,
+    testCaseCount: values.difficulty === "HARD" ? 8 : values.difficulty === "MEDIUM" ? 6 : 4,
+    solutionVideoUrl: null,
+    codingReview: mockReviewState("CODING", values.codingReview, values.codingReview === "due" ? 92 - index : 42 - index, codingResult),
+    explanationReview: mockReviewState(
+      "EXPLANATION",
+      values.explanationReview,
+      values.explanationReview === "due" ? 86 - index : 34 - index,
+      values.explanationReview === "new" ? null : "PASSED",
+    ),
+    createdAt: "2026-01-10T10:00:00.000Z",
+    updatedAt: `${values.updatedAt}T10:00:00.000Z`,
+  };
+}
+
+const mockProblems: ProblemSummary[] = [
+  mockProblem(0, {
+    title: "Binary Search",
+    summary: "Find a target in a sorted array using logarithmic search.",
+    type: "PYTHON",
+    difficulty: "EASY",
+    status: "solved",
+    codingReview: "up_to_date",
+    explanationReview: "new",
+    avgTimeMinutes: 8,
+    updatedAt: "2026-05-08",
+  }),
+  mockProblem(1, {
+    title: "Merge Intervals",
+    summary: "Merge overlapping intervals after sorting by start time.",
+    type: "JAVA",
+    difficulty: "MEDIUM",
+    status: "attempted",
+    codingReview: "due",
+    explanationReview: "up_to_date",
+    avgTimeMinutes: 22,
+    updatedAt: "2026-05-04",
+  }),
+  mockProblem(2, {
+    title: "Valid Parentheses",
+    summary: "Use a stack to validate balanced bracket pairs.",
+    type: "JAVASCRIPT",
+    difficulty: "EASY",
+    status: "not_started",
+    codingReview: "new",
+    explanationReview: "new",
+    avgTimeMinutes: 10,
+    updatedAt: "2026-04-29",
+  }),
+  mockProblem(3, {
+    title: "LRU Cache",
+    summary: "Design a cache with O(1) get and put operations.",
+    type: "CPP",
+    difficulty: "HARD",
+    status: "attempted",
+    codingReview: "due",
+    explanationReview: "due",
+    avgTimeMinutes: 45,
+    updatedAt: "2026-04-22",
+  }),
+  mockProblem(4, {
+    title: "Top K Frequent Elements",
+    summary: "Return the most frequent elements using buckets or a heap.",
+    type: "PYTHON",
+    difficulty: "MEDIUM",
+    status: "solved",
+    codingReview: "up_to_date",
+    explanationReview: "up_to_date",
+    avgTimeMinutes: 28,
+    updatedAt: "2026-04-18",
+  }),
+  mockProblem(5, {
+    title: "Word Ladder",
+    summary: "Find the shortest transformation sequence with BFS.",
+    type: "JAVA",
+    difficulty: "HARD",
+    status: "not_started",
+    codingReview: "new",
+    explanationReview: "due",
+    avgTimeMinutes: 50,
+    updatedAt: "2026-04-12",
+  }),
+  mockProblem(6, {
+    title: "Kth Largest Element",
+    summary: "Select the kth largest value with heap or quickselect.",
+    type: "JAVASCRIPT",
+    difficulty: "MEDIUM",
+    status: "attempted",
+    codingReview: "up_to_date",
+    explanationReview: "new",
+    avgTimeMinutes: 24,
+    updatedAt: "2026-04-08",
+  }),
+  mockProblem(7, {
+    title: "Longest Substring Without Repeating Characters",
+    summary: "Track a sliding window over unique characters.",
+    type: "CPP",
+    difficulty: "MEDIUM",
+    status: "solved",
+    codingReview: "due",
+    explanationReview: "up_to_date",
+    avgTimeMinutes: 19,
+    updatedAt: "2026-04-02",
+  }),
+  mockProblem(8, {
+    title: "Course Schedule",
+    summary: "Detect cycles in prerequisite dependencies.",
+    type: "PYTHON",
+    difficulty: "MEDIUM",
+    status: "attempted",
+    codingReview: "due",
+    explanationReview: "new",
+    avgTimeMinutes: 31,
+    updatedAt: "2026-03-27",
+  }),
+  mockProblem(9, {
+    title: "Serialize and Deserialize Binary Tree",
+    summary: "Encode and rebuild a binary tree from traversal data.",
+    type: "JAVA",
+    difficulty: "HARD",
+    status: "not_started",
+    codingReview: "new",
+    explanationReview: "new",
+    avgTimeMinutes: 54,
+    updatedAt: "2026-03-20",
+  }),
+  mockProblem(10, {
+    title: "Minimum Window Substring",
+    summary: "Find the smallest window containing all required characters.",
+    type: "JAVASCRIPT",
+    difficulty: "HARD",
+    status: "attempted",
+    codingReview: "due",
+    explanationReview: "due",
+    avgTimeMinutes: 47,
+    updatedAt: "2026-03-14",
+  }),
+  mockProblem(11, {
+    title: "Clone Graph",
+    summary: "Deep copy an undirected graph with DFS or BFS.",
+    type: "CPP",
+    difficulty: "MEDIUM",
+    status: "solved",
+    codingReview: "up_to_date",
+    explanationReview: "up_to_date",
+    avgTimeMinutes: 26,
+    updatedAt: "2026-03-08",
+  }),
+  mockProblem(12, {
+    title: "Number of Islands",
+    summary: "Count connected land components in a grid.",
+    type: "PYTHON",
+    difficulty: "MEDIUM",
+    status: "attempted",
+    codingReview: "up_to_date",
+    explanationReview: "due",
+    avgTimeMinutes: 23,
+    updatedAt: "2026-03-01",
+  }),
+  mockProblem(13, {
+    title: "House Robber",
+    summary: "Use dynamic programming to maximize non-adjacent gains.",
+    type: "JAVA",
+    difficulty: "EASY",
+    status: "solved",
+    codingReview: "up_to_date",
+    explanationReview: "new",
+    avgTimeMinutes: 12,
+    updatedAt: "2026-02-25",
+  }),
+  mockProblem(14, {
+    title: "Coin Change",
+    summary: "Compute the fewest coins needed for a target amount.",
+    type: "JAVASCRIPT",
+    difficulty: "MEDIUM",
+    status: "not_started",
+    codingReview: "new",
+    explanationReview: "new",
+    avgTimeMinutes: 34,
+    updatedAt: "2026-02-20",
+  }),
+  mockProblem(15, {
+    title: "Implement Trie",
+    summary: "Build prefix-tree insert, search, and startsWith APIs.",
+    type: "CPP",
+    difficulty: "MEDIUM",
+    status: "attempted",
+    codingReview: "due",
+    explanationReview: "up_to_date",
+    avgTimeMinutes: 29,
+    updatedAt: "2026-02-14",
+  }),
+  mockProblem(16, {
+    title: "Rotting Oranges",
+    summary: "Run multi-source BFS to simulate minute-by-minute spread.",
+    type: "PYTHON",
+    difficulty: "MEDIUM",
+    status: "solved",
+    codingReview: "up_to_date",
+    explanationReview: "up_to_date",
+    avgTimeMinutes: 21,
+    updatedAt: "2026-02-08",
+  }),
+  mockProblem(17, {
+    title: "Meeting Rooms II",
+    summary: "Find the minimum rooms required for overlapping meetings.",
+    type: "JAVA",
+    difficulty: "MEDIUM",
+    status: "attempted",
+    codingReview: "due",
+    explanationReview: "new",
+    avgTimeMinutes: 25,
+    updatedAt: "2026-01-31",
+  }),
+  mockProblem(18, {
+    title: "Median of Two Sorted Arrays",
+    summary: "Binary search partitions across two sorted arrays.",
+    type: "CPP",
+    difficulty: "HARD",
+    status: "not_started",
+    codingReview: "new",
+    explanationReview: "due",
+    avgTimeMinutes: 55,
+    updatedAt: "2026-01-23",
+  }),
+  mockProblem(19, {
+    title: "Sliding Window Maximum",
+    summary: "Maintain a monotonic deque for each window maximum.",
+    type: "JAVASCRIPT",
+    difficulty: "HARD",
+    status: "solved",
+    codingReview: "up_to_date",
+    explanationReview: "up_to_date",
+    avgTimeMinutes: 42,
+    updatedAt: "2026-01-15",
+  }),
+];
+
 export function ProblemListPage() {
-  const pageSize = useResponsivePageSize();
+  const tableBodyRef = useRef<HTMLDivElement>(null);
+  const pageSize = useResponsivePageSize(tableBodyRef);
   const [pageIndex, setPageIndex] = useState(0);
   const [problems, setProblems] = useState<ProblemSummary[]>([]);
   const [refreshToken, setRefreshToken] = useState(0);
@@ -118,6 +446,7 @@ export function ProblemListPage() {
   const [openActionMenuId, setOpenActionMenuId] = useState<string | null>(null);
   const [actionMenuPosition, setActionMenuPosition] = useState<ActionMenuPosition | null>(null);
   const [deleteCandidate, setDeleteCandidate] = useState<CatalogProblem | null>(null);
+  const [showCatalogControlsDialog, setShowCatalogControlsDialog] = useState(false);
   const [showHelpDialog, setShowHelpDialog] = useState(false);
   const [showSettingsDialog, setShowSettingsDialog] = useState(false);
   const [activeWorkspace, setActiveWorkspace] = useState<LocalProblemWorkspace | null>(null);
@@ -146,7 +475,7 @@ export function ProblemListPage() {
       try {
         const response = await listProblems();
         if (active) {
-          setProblems(response);
+          setProblems([...response, ...mockProblems]);
           setError(null);
         }
       } catch (loadError) {
@@ -353,6 +682,21 @@ export function ProblemListPage() {
   }, [deleteCandidate]);
 
   useEffect(() => {
+    if (!showCatalogControlsDialog) {
+      return;
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setShowCatalogControlsDialog(false);
+      }
+    }
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [showCatalogControlsDialog]);
+
+  useEffect(() => {
     setPageIndex(0);
   }, [difficultyFilter, languageFilter, pageSize, reviewFilter, searchQuery, statusFilter, trackFilter]);
 
@@ -454,6 +798,61 @@ export function ProblemListPage() {
     closeActionMenu();
   }
 
+  function isMockProblemId(problemId: string) {
+    return problemId.startsWith("mock-problem-");
+  }
+
+  function mockWorkspaceForProblem(problem: CatalogProblem): LocalProblemWorkspace {
+    return {
+      problemId: problem.id,
+      title: problem.displayTitle,
+      slug: problem.slug,
+      scaffoldPath: `/Users/villegas/juro-workspace/${problem.slug}`,
+      editor: "VS_CODE",
+      opened: true,
+      status: "OPEN",
+      processId: null,
+      closeDetectionAvailable: true,
+      launchedAt: new Date().toISOString(),
+      message: "",
+    };
+  }
+
+  function mockRunResultForProblem(problem: CatalogProblem): LocalProblemRunResult {
+    const passed = problem.status === "SOLVED";
+    return {
+      problemId: problem.id,
+      title: problem.displayTitle,
+      slug: problem.slug,
+      scaffoldPath: `/Users/villegas/juro-workspace/${problem.slug}`,
+      status: passed ? "PASSED" : "FAILED",
+      exitCode: passed ? 0 : 1,
+      runtimeMillis: (problem.avgTimeMinutes ?? 20) * 35,
+      stdout: passed ? "All sample cases passed." : "Sample case failed.",
+      stderr: "",
+      caseResults: [
+        {
+          label: "Sample 1",
+          passed,
+          inputData: "[1,2,3]",
+          expectedOutput: "true",
+          actualOutput: passed ? "true" : "false",
+          note: passed ? "Matches expected output." : "Mock failure for UI testing.",
+          runtimeMillis: 12,
+        },
+        {
+          label: "Sample 2",
+          passed: true,
+          inputData: "[4,5,6]",
+          expectedOutput: "true",
+          actualOutput: "true",
+          note: "Matches expected output.",
+          runtimeMillis: 15,
+        },
+      ],
+    };
+  }
+
   function closeEditProblemModal() {
     setEditProblemMode(null);
     setSelectedProblem(null);
@@ -482,6 +881,14 @@ export function ProblemListPage() {
     setLocalActionError(null);
 
     try {
+      if (isMockProblemId(problem.id)) {
+        setActiveWorkspace(mockWorkspaceForProblem(problem));
+        setLastRunResult(null);
+        setLastKnowledgeResult(null);
+        closeActionMenu();
+        return;
+      }
+
       const workspace = await openProblemInEditor(problem.id);
       setActiveWorkspace(workspace);
       setLastRunResult(null);
@@ -506,6 +913,15 @@ export function ProblemListPage() {
     setLocalActionError(null);
 
     try {
+      if (isMockProblemId(problemId)) {
+        const problem = catalogProblems.find((item) => item.id === problemId);
+        if (problem) {
+          setActiveWorkspace(mockWorkspaceForProblem(problem));
+        }
+        setLastKnowledgeResult(null);
+        return;
+      }
+
       const workspace = await openProblemInEditor(problemId);
       setActiveWorkspace(workspace);
       setLastKnowledgeResult(null);
@@ -527,6 +943,13 @@ export function ProblemListPage() {
     setLocalActionError(null);
 
     try {
+      if (isMockProblemId(problem.id)) {
+        setActiveWorkspace(mockWorkspaceForProblem(problem));
+        setLastRunResult(null);
+        closeActionMenu();
+        return;
+      }
+
       const workspace = await createProblemScaffold(problem.id);
       setActiveWorkspace(workspace);
       setLastRunResult(null);
@@ -549,6 +972,15 @@ export function ProblemListPage() {
     setLocalActionError(null);
 
     try {
+      if (isMockProblemId(problemId)) {
+        const problem = catalogProblems.find((item) => item.id === problemId);
+        if (problem) {
+          setLastRunResult(mockRunResultForProblem(problem));
+          setActiveWorkspace((current) => current ?? mockWorkspaceForProblem(problem));
+        }
+        return;
+      }
+
       const result = await runLocalProblemTests(problemId);
       setLastRunResult(result);
       setActiveWorkspace((current) =>
@@ -725,162 +1157,233 @@ export function ProblemListPage() {
         )
       : null;
 
-  return (
-    <section className="viewport-page viewport-page--catalog">
-      <div className="catalog-shell">
-        <section className="problem-bank-panel glass-panel">
-          <header className="problem-bank-header">
-            <div className="problem-bank-header__bar">
-              <div aria-hidden="true" />
-              <h1 className="juro-wordmark">
-                <span className="juro-wordmark__glyph" aria-hidden="true" />
-                <span>JUR<span className="juro-wordmark__accent">O</span></span>
-              </h1>
-              <div className="problem-bank-header__actions">
-                <ThemeToggleButton />
-                <button
-                  aria-label="Open help"
-                  className="icon-button"
-                  onClick={() => setShowHelpDialog(true)}
-                  type="button"
-                >
-                  <CircleHelp size={17} strokeWidth={2.25} />
-                </button>
-                <button
-                  aria-label="Settings"
-                  className="icon-button"
-                  onClick={() => setShowSettingsDialog(true)}
-                  type="button"
-                >
-                  <Settings size={17} strokeWidth={2.25} />
-                </button>
-              </div>
-            </div>
-          </header>
-
-          <div className="catalog-toolbar">
-            <label className="catalog-search">
-              <span className="catalog-search__icon" aria-hidden="true" />
-              <input
-                aria-label="Search problems"
-                placeholder="Search problems by name, tag, or topic..."
-                value={searchQuery}
-                onChange={(event) => setSearchQuery(event.target.value)}
-              />
-            </label>
-            <div className="catalog-toolbar__meta">
-              {fileSyncStatus?.enabled ? (
-                <div
-                  className={`catalog-sync-status${
-                    fileSyncStatus.lastError
-                      ? " catalog-sync-status--error"
-                      : fileSyncStatus.synced
-                        ? " catalog-sync-status--ok"
-                        : ""
-                  }`}
-                  title={fileSyncStatus.lastError ?? fileSyncStatus.filePath}
-                >
-                  {catalogFileSyncLabel(fileSyncStatus)}
+  const shownProblemCount = filteredProblems.length;
+  const shownProblemCountLabel = `${shownProblemCount} ${shownProblemCount === 1 ? "problem" : "problems"}`;
+  const catalogControlsDialog =
+    showCatalogControlsDialog && typeof document !== "undefined"
+      ? createPortal(
+          <div
+            className="catalog-controls-backdrop"
+            onMouseDown={(event) => {
+              if (event.target === event.currentTarget) {
+                setShowCatalogControlsDialog(false);
+              }
+            }}
+          >
+            <section
+              aria-label="Search and filter problems"
+              aria-modal="true"
+              className="catalog-controls-dialog"
+              role="dialog"
+            >
+              <header className="catalog-controls-dialog__header">
+                <div>
+                  <h2>Search</h2>
+                  <p>{shownProblemCountLabel}</p>
                 </div>
-              ) : null}
-              <button aria-label="New Problem" className="new-problem-button" onClick={openNewProblemModal} type="button">
-                <Plus size={15} strokeWidth={2.4} />
-                <span>New Problem</span>
-              </button>
-              <div className="catalog-count">
-                {problems.length} {problems.length === 1 ? "problem" : "problems"}
+                <button
+                  aria-label="Close search and filters"
+                  className="icon-button"
+                  onClick={() => setShowCatalogControlsDialog(false)}
+                  type="button"
+                >
+                  <X size={17} strokeWidth={2.35} />
+                </button>
+              </header>
+
+              <div className="catalog-controls-dialog__body">
+                <label className="catalog-search catalog-controls-dialog__search">
+                  <span className="catalog-search__icon" aria-hidden="true" />
+                  <input
+                    aria-label="Search problems"
+                    placeholder="Search problems by name, tag, or topic..."
+                    value={searchQuery}
+                    onChange={(event) => setSearchQuery(event.target.value)}
+                  />
+                </label>
+
+                <div className="catalog-controls-grid" aria-label="Problem filters">
+                  <label className="catalog-control-field">
+                    <span className="catalog-control-field__label">Track</span>
+                    <span className={`filter-control${trackFilter !== "ALL" ? " filter-control--active" : ""}`}>
+                      <select
+                        aria-label="Track"
+                        value={trackFilter}
+                        onChange={(event) => setTrackFilter(event.target.value as ProblemTrack | "ALL")}
+                      >
+                        <option value="ALL">Track</option>
+                        <option value="Algorithms">Algorithms</option>
+                      </select>
+                    </span>
+                  </label>
+
+                  <label className="catalog-control-field">
+                    <span className="catalog-control-field__label">Difficulty</span>
+                    <span className={`filter-control${difficultyFilter !== "ALL" ? " filter-control--active" : ""}`}>
+                      <select
+                        aria-label="Difficulty"
+                        value={difficultyFilter}
+                        onChange={(event) => setDifficultyFilter(event.target.value as ProblemDifficulty | "ALL")}
+                      >
+                        <option value="ALL">Difficulty</option>
+                        <option value="EASY">Easy</option>
+                        <option value="MEDIUM">Medium</option>
+                        <option value="HARD">Hard</option>
+                      </select>
+                    </span>
+                  </label>
+
+                  <label className="catalog-control-field">
+                    <span className="catalog-control-field__label">Language</span>
+                    <span className={`filter-control${languageFilter !== "ALL" ? " filter-control--active" : ""}`}>
+                      <select
+                        aria-label="Language"
+                        value={languageFilter}
+                        onChange={(event) => setLanguageFilter(event.target.value as ProblemType | "ALL")}
+                      >
+                        <option value="ALL">Language</option>
+                        <option value="JAVA">JAVA</option>
+                        <option value="PYTHON">Python</option>
+                        <option value="JAVASCRIPT">JavaScript</option>
+                        <option value="CPP">C++</option>
+                      </select>
+                    </span>
+                  </label>
+
+                  <label className="catalog-control-field">
+                    <span className="catalog-control-field__label">Review</span>
+                    <span className={`filter-control${reviewFilter !== "ALL" ? " filter-control--active" : ""}`}>
+                      <select
+                        aria-label="Review status"
+                        value={reviewFilter}
+                        onChange={(event) => setReviewFilter(event.target.value as ReviewFilter)}
+                      >
+                        <option value="ALL">Review</option>
+                        <option value="DUE">Due now</option>
+                        <option value="CODE_DUE">Code due</option>
+                        <option value="EXPLANATION_DUE">Explain due</option>
+                        <option value="NEW">New</option>
+                        <option value="MASTERED">Mastered</option>
+                      </select>
+                    </span>
+                  </label>
+
+                  <label className="catalog-control-field">
+                    <span className="catalog-control-field__label">Status</span>
+                    <span className={`filter-control${statusFilter !== "ALL" ? " filter-control--active" : ""}`}>
+                      <select
+                        aria-label="Status"
+                        value={statusFilter}
+                        onChange={(event) => setStatusFilter(event.target.value as CatalogStatus | "ALL")}
+                      >
+                        <option value="ALL">Status</option>
+                        <option value="SOLVED">Solved</option>
+                        <option value="ATTEMPTED">Attempted</option>
+                        <option value="NOT_STARTED">Not started</option>
+                      </select>
+                    </span>
+                  </label>
+
+                  <label className="catalog-control-field">
+                    <span className="catalog-control-field__label">Sort</span>
+                    <span className="filter-control filter-control--active filter-control--sort">
+                      <select
+                        aria-label="Sort problems"
+                        value={sortSelectValue}
+                        onChange={(event) => handleSortPreset(event.target.value as SortPreset)}
+                      >
+                        <option value="REVIEW_DESC">Sort by: Review priority</option>
+                        <option value="UPDATED_DESC">Sort by: Recently updated</option>
+                        <option value="TITLE_ASC">Sort by: Problem name</option>
+                        <option value="DIFFICULTY_ASC">Sort by: Difficulty</option>
+                        <option value="AVG_TIME_ASC">Sort by: Avg time</option>
+                        <option disabled value="CUSTOM">
+                          Sort by: Custom
+                        </option>
+                      </select>
+                    </span>
+                  </label>
+                </div>
               </div>
-            </div>
-          </div>
 
-          <div className="catalog-filters" aria-label="Problem filters">
-            <label className={`filter-control${trackFilter !== "ALL" ? " filter-control--active" : ""}`}>
-              <select
-                aria-label="Track"
-                value={trackFilter}
-                onChange={(event) => setTrackFilter(event.target.value as ProblemTrack | "ALL")}
-              >
-                <option value="ALL">Track</option>
-                <option value="Algorithms">Algorithms</option>
-              </select>
-            </label>
+              {fileSyncStatus?.enabled || hasActiveFilters ? (
+                <footer className="catalog-controls-dialog__footer">
+                  {fileSyncStatus?.enabled ? (
+                    <div
+                      className={`catalog-sync-status${
+                        fileSyncStatus.lastError
+                          ? " catalog-sync-status--error"
+                          : fileSyncStatus.synced
+                            ? " catalog-sync-status--ok"
+                            : ""
+                      }`}
+                      title={fileSyncStatus.lastError ?? fileSyncStatus.filePath}
+                    >
+                      {catalogFileSyncLabel(fileSyncStatus)}
+                    </div>
+                  ) : (
+                    <span aria-hidden="true" />
+                  )}
+                  {hasActiveFilters ? (
+                    <button className="clear-filters" onClick={clearFilters} type="button">
+                      Clear filters
+                    </button>
+                  ) : null}
+                </footer>
+              ) : null}
+            </section>
+          </div>,
+          document.body,
+        )
+      : null;
 
-            <label className={`filter-control${difficultyFilter !== "ALL" ? " filter-control--active" : ""}`}>
-              <select
-                aria-label="Difficulty"
-                value={difficultyFilter}
-                onChange={(event) => setDifficultyFilter(event.target.value as ProblemDifficulty | "ALL")}
-              >
-                <option value="ALL">Difficulty</option>
-                <option value="EASY">Easy</option>
-                <option value="MEDIUM">Medium</option>
-                <option value="HARD">Hard</option>
-              </select>
-            </label>
+  return (
+    <>
+      <aside className="app-sidebar" aria-label="Application navigation">
+        <nav className="app-sidebar__section app-sidebar__section--top" aria-label="Primary actions">
+          <button
+            aria-label="New Problem"
+            className="icon-button"
+            onClick={openNewProblemModal}
+            type="button"
+          >
+            <Plus size={17} strokeWidth={2.35} />
+          </button>
+          <button
+            aria-expanded={showCatalogControlsDialog}
+            aria-haspopup="dialog"
+            aria-label="Search and filter problems"
+            className="icon-button"
+            onClick={() => setShowCatalogControlsDialog(true)}
+            type="button"
+          >
+            <Search size={17} strokeWidth={2.35} />
+          </button>
+        </nav>
+        <nav className="app-sidebar__section app-sidebar__section--bottom" aria-label="Utility actions">
+          <ThemeToggleButton />
+          <button
+            aria-label="Open help"
+            className="icon-button"
+            onClick={() => setShowHelpDialog(true)}
+            type="button"
+          >
+            <CircleHelp size={17} strokeWidth={2.25} />
+          </button>
+          <button
+            aria-label="Settings"
+            className="icon-button"
+            onClick={() => setShowSettingsDialog(true)}
+            type="button"
+          >
+            <Settings size={17} strokeWidth={2.25} />
+          </button>
+        </nav>
+      </aside>
 
-            <label className={`filter-control${languageFilter !== "ALL" ? " filter-control--active" : ""}`}>
-              <select
-                aria-label="Language"
-                value={languageFilter}
-                onChange={(event) => setLanguageFilter(event.target.value as ProblemType | "ALL")}
-              >
-                <option value="ALL">Language</option>
-                <option value="JAVA">JAVA</option>
-              </select>
-            </label>
-
-            <label className={`filter-control${reviewFilter !== "ALL" ? " filter-control--active" : ""}`}>
-              <select
-                aria-label="Review status"
-                value={reviewFilter}
-                onChange={(event) => setReviewFilter(event.target.value as ReviewFilter)}
-              >
-                <option value="ALL">Review</option>
-                <option value="DUE">Due now</option>
-                <option value="CODE_DUE">Code due</option>
-                <option value="EXPLANATION_DUE">Explain due</option>
-                <option value="NEW">New</option>
-                <option value="MASTERED">Mastered</option>
-              </select>
-            </label>
-
-            <label className={`filter-control${statusFilter !== "ALL" ? " filter-control--active" : ""}`}>
-              <select
-                aria-label="Status"
-                value={statusFilter}
-                onChange={(event) => setStatusFilter(event.target.value as CatalogStatus | "ALL")}
-              >
-                <option value="ALL">Status</option>
-                <option value="SOLVED">Solved</option>
-                <option value="ATTEMPTED">Attempted</option>
-                <option value="NOT_STARTED">Not started</option>
-              </select>
-            </label>
-
-            <label className="filter-control filter-control--active filter-control--sort">
-              <select
-                aria-label="Sort problems"
-                value={sortSelectValue}
-                onChange={(event) => handleSortPreset(event.target.value as SortPreset)}
-              >
-                <option value="REVIEW_DESC">Sort by: Review priority</option>
-                <option value="UPDATED_DESC">Sort by: Recently updated</option>
-                <option value="TITLE_ASC">Sort by: Problem name</option>
-                <option value="DIFFICULTY_ASC">Sort by: Difficulty</option>
-                <option value="AVG_TIME_ASC">Sort by: Avg time</option>
-                <option disabled value="CUSTOM">
-                  Sort by: Custom
-                </option>
-              </select>
-            </label>
-
-            {hasActiveFilters ? (
-              <button className="clear-filters" onClick={clearFilters} type="button">
-                Clear filters
-              </button>
-            ) : null}
-          </div>
-
+      <section className="viewport-page viewport-page--catalog">
+      <div className="catalog-shell">
+        <section className="problem-bank-panel">
           {localActionError ? <div className="local-action-error error-banner">{localActionError}</div> : null}
 
           <LocalWorkspacePanel
@@ -918,7 +1421,7 @@ export function ProblemListPage() {
               <div className="catalog-actions-head">Actions</div>
             </div>
 
-            <div className="catalog-table__body">
+            <div className="catalog-table__body" ref={tableBodyRef}>
               {isLoading ? <div className="empty-state">Loading problems…</div> : null}
               {error ? <div className="error-banner">{error}</div> : null}
               {!isLoading && !error && pagedProblems.length === 0 ? (
@@ -1066,6 +1569,7 @@ export function ProblemListPage() {
       </div>
 
       {floatingActionMenu}
+      {catalogControlsDialog}
 
       {deleteCandidate ? (
         <div
@@ -1128,6 +1632,7 @@ export function ProblemListPage() {
           }}
         />
       ) : null}
-    </section>
+      </section>
+    </>
   );
 }

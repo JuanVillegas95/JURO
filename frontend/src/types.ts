@@ -1,4 +1,4 @@
-export type ProblemType = "JAVA";
+export type ProblemType = "JAVA" | "PYTHON" | "JAVASCRIPT" | "CPP";
 export type ProblemDifficulty = "EASY" | "MEDIUM" | "HARD";
 export type SubmissionStatus = "QUEUED" | "ACCEPTED" | "REJECTED";
 export type ReviewTrack = "CODING" | "EXPLANATION";
@@ -25,6 +25,7 @@ export interface ProblemSummary {
   summary: string;
   type: ProblemType;
   difficulty: ProblemDifficulty;
+  avgTimeMinutes?: number | null;
   exampleCount: number;
   testCaseCount: number;
   solutionVideoUrl?: string | null;

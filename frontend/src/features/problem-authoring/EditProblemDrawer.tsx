@@ -35,7 +35,6 @@ export function EditProblemDrawer({ mode, onClose, onSaved, problem }: EditProbl
   const initialDraft = initialEditProblemDraft(mode, problem);
   const [title, setTitle] = useState(initialDraft.title);
   const [slug, setSlug] = useState(initialDraft.slug);
-  const [slugWasEdited, setSlugWasEdited] = useState(false);
   const [languages, setLanguages] = useState<ProblemType[]>(initialDraft.languages);
   const [difficulty, setDifficulty] = useState<ProblemDifficulty | null>(initialDraft.difficulty);
   const [inputType, setInputType] = useState<TestValueType>(initialDraft.inputType);
@@ -163,10 +162,7 @@ export function EditProblemDrawer({ mode, onClose, onSaved, problem }: EditProbl
 
   function handleTitleChange(value: string) {
     setTitle(value);
-
-    if (!slugWasEdited) {
-      setSlug(slugifyTitle(value));
-    }
+    setSlug(slugifyTitle(value));
   }
 
   function toggleLanguage(language: ProblemType) {
@@ -303,7 +299,7 @@ export function EditProblemDrawer({ mode, onClose, onSaved, problem }: EditProbl
     }
   }
 
-  const languageStyles: Record<ProblemType, { selected: string; unselected: string }> = {
+  const languageStyles: Partial<Record<ProblemType, { selected: string; unselected: string }>> = {
     JAVA: {
       selected: "bg-[#F97316] text-white border-[#F97316]",
       unselected: "bg-orange-50 text-orange-700 border-orange-200",
@@ -359,7 +355,9 @@ export function EditProblemDrawer({ mode, onClose, onSaved, problem }: EditProbl
           </span>
           {previewLanguage ? (
             <span
-              className={`rounded-full border px-2.5 py-1 text-[12px] font-bold ${languageStyles[previewLanguage].selected}`}
+              className={`rounded-full border px-2.5 py-1 text-[12px] font-bold ${
+                languageStyles[previewLanguage]?.selected ?? languageStyles.JAVA?.selected
+              }`}
             >
               {previewLanguage}
             </span>
@@ -471,23 +469,6 @@ export function EditProblemDrawer({ mode, onClose, onSaved, problem }: EditProbl
                   <FieldError message={rootFieldError("title")} />
                 </label>
 
-                <label className="grid gap-1.5">
-                  <span className="text-[13px] font-semibold text-slate-500">Slug</span>
-                  <input
-                    aria-label="Problem slug"
-                    className="!h-10 !w-full !rounded-lg !border !border-slate-300 !bg-slate-100 !px-3 !py-0 font-mono text-[13px] !text-slate-700 !shadow-none outline-none transition placeholder:text-slate-400 focus:!border-[#3B82F6] focus:!bg-white focus:!ring-4 focus:!ring-[#3B82F6]/15"
-                    placeholder="auto-generated-from-title"
-                    value={slug}
-                    onChange={(event) => {
-                      setSlugWasEdited(true);
-                      setSlug(slugifyTitle(event.target.value));
-                    }}
-                  />
-                  <span className="text-[12px] font-medium text-slate-500">
-                    URL-friendly identifier. Auto-generated from the title — edit only if needed.
-                  </span>
-                  <FieldError message={rootFieldError("slug")} />
-                </label>
               </div>
 
               <div className="space-y-2">
@@ -495,7 +476,7 @@ export function EditProblemDrawer({ mode, onClose, onSaved, problem }: EditProbl
                   {(["JAVA"] as ProblemType[]).map((language) => (
                     <button
                       className={`min-h-11 rounded-full border px-4 py-1 text-[12px] font-bold transition focus:outline-none focus:ring-2 focus:ring-[#3B82F6]/30 md:min-h-0 md:px-3 ${
-                        languages.includes(language) ? languageStyles[language].selected : languageStyles[language].unselected
+                        languages.includes(language) ? languageStyles[language]?.selected : languageStyles[language]?.unselected
                       }`}
                       key={language}
                       onClick={() => toggleLanguage(language)}

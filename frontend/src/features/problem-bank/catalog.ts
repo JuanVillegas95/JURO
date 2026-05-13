@@ -16,7 +16,7 @@ export type CatalogProblem = ProblemSummary & {
 export const statusMeta: Record<CatalogStatus, { label: string; mark: string }> = {
   SOLVED: { label: "Solved", mark: "●" },
   ATTEMPTED: { label: "Attempted", mark: "◐" },
-  NOT_STARTED: { label: "Not started", mark: "○" },
+  NOT_STARTED: { label: "Unsolved", mark: "○" },
 };
 
 export const statusRank: Record<CatalogStatus, number> = {
@@ -40,7 +40,14 @@ export function displayDifficulty(value: ProblemDifficulty) {
 }
 
 export function displayLanguage(value: ProblemType) {
-  return "JAVA";
+  const labels: Record<ProblemType, string> = {
+    JAVA: "JAVA",
+    PYTHON: "Python",
+    JAVASCRIPT: "JavaScript",
+    CPP: "C++",
+  };
+
+  return labels[value];
 }
 
 export function trackForProblem(problem: ProblemSummary): ProblemTrack {
@@ -58,6 +65,10 @@ export function statusForProblem(problem: ProblemSummary): CatalogStatus {
 }
 
 export function averageTimeForProblem(problem: ProblemSummary) {
+  if (problem.avgTimeMinutes !== undefined) {
+    return problem.avgTimeMinutes;
+  }
+
   const seed = hashString(problem.id);
 
   if (problem.difficulty === "HARD" || seed % 7 === 0) {
@@ -217,6 +228,10 @@ export function reviewLabel(review: ReviewState | undefined) {
     return "New";
   }
 
+  if (review.status === "MASTERED") {
+    return "Up to Date";
+  }
+
   const due = new Date(review.dueAt);
   if (Number.isNaN(due.getTime())) {
     return review.status.charAt(0) + review.status.slice(1).toLowerCase();
@@ -226,6 +241,9 @@ export function reviewLabel(review: ReviewState | undefined) {
   const diffDays = Math.ceil((due.getTime() - now.getTime()) / 86_400_000);
   if (diffDays <= 0 || review.status === "DUE") {
     return "Due";
+  }
+  if (review.status === "REVIEW") {
+    return "Up to Date";
   }
   if (diffDays === 1) {
     return "Tomorrow";

@@ -29,13 +29,12 @@ export function AboutHelpDialog({ onClose }: AboutHelpDialogProps) {
     >
       <section aria-label="About JURO" aria-modal="true" className="help-dialog" role="dialog">
         <header className="help-dialog__header">
-          <div>
-            <span className="section-kicker">Help</span>
+          <div className="help-dialog__intro">
             <h2>About JURO</h2>
             <p>
-              JURO is a personal coding-problem bank for self-study. It helps you collect problems, launch them in
-              your local editor, test your solutions, explain your reasoning, and review each problem again at the
-              right time.
+              JURO is your personal coding problem bank — built for deliberate practice, not passive collection. Add
+              problems, open them in your editor, run tests, explain your thinking, and let spaced repetition decide
+              what to study next.
             </p>
           </div>
           <button aria-label="Close help" className="icon-button" onClick={onClose} type="button">
@@ -46,68 +45,68 @@ export function AboutHelpDialog({ onClose }: AboutHelpDialogProps) {
         <div className="help-dialog__body">
           <HelpSection title="Why JURO Exists">
             <p>
-              JURO was born from the need for a dedicated repository of coding problems for deliberate practice. It is
-              more structured than a simple list: it helps decide what to study next, not just record what has already
-              been solved.
+              Most problem trackers just record what you've solved. JURO goes further: it helps you decide what to
+              practice next, and holds you accountable to actually knowing it — both in code and in explanation.
             </p>
           </HelpSection>
 
-          <HelpSection title="Two Ways To Prove You Know A Problem">
+          <HelpSection title="Two Ways to Prove You Know a Problem">
             <div className="help-track-grid">
               <article className="help-track-card">
                 <strong>Code</strong>
-                <p>Can you implement the solution and pass the required test cases?</p>
+                <p>Can you implement the solution from scratch and pass all test cases?</p>
               </article>
               <article className="help-track-card">
                 <strong>Explain</strong>
-                <p>Can you clearly explain the algorithm, edge cases, correctness, and complexity?</p>
+                <p>
+                  Can you articulate the algorithm, edge cases, time complexity, and tradeoffs clearly — without
+                  looking at the code?
+                </p>
               </article>
             </div>
           </HelpSection>
 
           <HelpSection title="How Coding Practice Works">
             <ul>
-              <li>Choose a problem from the Problem Bank.</li>
-              <li>JURO creates a local scaffold and opens it in your preferred editor, such as VS Code or Neovim.</li>
-              <li>Write the solution locally, return to JURO, and run the tests.</li>
-              <li>Use the result to grade the coding review.</li>
+              <li>Pick a problem from your bank</li>
+              <li>JURO scaffolds it locally and opens it in your preferred editor (VS Code, Neovim, etc.)</li>
+              <li>Write your solution, come back to JURO, and run the test suite</li>
+              <li>The result is graded and updates your coding review schedule</li>
             </ul>
           </HelpSection>
 
           <HelpSection title="How Explanation Practice Works">
             <ul>
-              <li>Open the Knowledge Check for a problem.</li>
-              <li>Record or type your explanation of the approach, edge cases, and complexity.</li>
-              <li>JURO can transcribe with browser speech recognition, then send the text to the configured AI provider.</li>
-              <li>The AI gives feedback, but you decide whether the explanation passed or needs review.</li>
+              <li>Open the Knowledge Check for any problem</li>
+              <li>Speak or type your explanation of the approach, edge cases, and complexity</li>
+              <li>JURO can transcribe your speech using the browser's built-in recognition</li>
+              <li>Your explanation is sent to the configured AI provider for evaluation</li>
+              <li>You decide the final verdict — pass or needs more review</li>
             </ul>
           </HelpSection>
 
           <HelpSection title="Spaced Repetition">
             <p>
-              JURO schedules future reviews based on performance. Passing increases the interval before the next
-              review. Failing, or marking something as needing review, brings it back sooner.
-            </p>
-            <p>
-              Coding and explanation have separate schedules because writing code takes more time, while explanation
-              reviews are faster and can happen more often.
+              JURO schedules your next review based on how well you did. Nail it — the interval grows. Struggle — it
+              comes back sooner. Code and explanation have separate schedules, since writing code takes longer and
+              explanation reviews can happen more often and anywhere.
             </p>
           </HelpSection>
 
           <HelpSection title="Settings">
             <ul>
-              <li>Choose the workspace folder where JURO rebuilds the current local problem scaffold.</li>
-              <li>Select your preferred editor and check Java tooling status.</li>
-              <li>Configure Ollama, Codex Adapter, or Anthropic Claude as the AI evaluator.</li>
-              <li>Use browser speech recognition for transcription, with manual text as the fallback.</li>
+              <li>Set your workspace folder — where JURO builds your local problem scaffold</li>
+              <li>Choose your preferred editor and verify Java tooling is available</li>
+              <li>Configure your AI evaluator: Ollama, Codex Adapter, or Anthropic Claude</li>
+              <li>Enable browser speech recognition, with typed text as a fallback</li>
             </ul>
           </HelpSection>
 
           <HelpSection title="Problem Authoring">
             <p>
-              New Problem and Edit Problem let you maintain your own bank. Problems include examples, runnable test
-              cases, starter code, a reference solution, a solution video, and a knowledge rubric. The rubric is what
-              the AI uses to evaluate conceptual understanding.
+              You own your bank. Use New Problem and Edit Problem to write your own entries — complete with examples,
+              runnable test cases, starter code, a reference solution, a solution video, and a knowledge rubric. The
+              rubric is what the AI uses to evaluate whether your explanation truly reflects understanding.
             </p>
           </HelpSection>
         </div>
