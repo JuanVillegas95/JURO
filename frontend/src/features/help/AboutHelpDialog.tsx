@@ -77,10 +77,10 @@ export function AboutHelpDialog({ onClose }: AboutHelpDialogProps) {
 
           <HelpSection title="How Explanation Practice Works">
             <ul>
-              <li>Open the Knowledge Check for any problem</li>
-              <li>Speak or type your explanation of the approach, edge cases, and complexity</li>
-              <li>JURO can transcribe your speech using the browser's built-in recognition</li>
-              <li>Your explanation is sent to the configured AI provider for evaluation</li>
+              <li>Click Explain to open Claude with the current problem context</li>
+              <li>Claude asks you to explain the approach, edge cases, and complexity</li>
+              <li>Claude rates the explanation through JURO's MCP knowledge-check tools</li>
+              <li>Use the manual transcript dialog if Claude cannot be opened</li>
               <li>You decide the final verdict — pass or needs more review</li>
             </ul>
           </HelpSection>
@@ -97,16 +97,16 @@ export function AboutHelpDialog({ onClose }: AboutHelpDialogProps) {
             <ul>
               <li>Set your workspace folder — where JURO builds your local problem scaffold</li>
               <li>Choose your preferred editor and verify Java tooling is available</li>
-              <li>Configure your AI evaluator: Ollama, Codex Adapter, or Anthropic Claude</li>
+              <li>Copy the local MCP configuration for Claude; JURO does not store provider URLs or API keys</li>
               <li>Enable browser speech recognition, with typed text as a fallback</li>
             </ul>
           </HelpSection>
 
-          <HelpSection title="Problem Authoring">
+          <HelpSection title="Problem Administration">
             <p>
-              You own your bank. Use New Problem and Edit Problem to write your own entries — complete with examples,
-              runnable test cases, starter code, a reference solution, a solution video, and a knowledge rubric. The
-              rubric is what the AI uses to evaluate whether your explanation truly reflects understanding.
+              The learner application reads problem definitions from the local SQLite database. Use the separate local
+              MCP server to list, create, update, and remove complete problem records with examples, runnable test
+              cases, starter code, a reference solution, and a knowledge rubric.
             </p>
           </HelpSection>
         </div>

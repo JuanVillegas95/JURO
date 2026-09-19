@@ -31,10 +31,6 @@ export const difficultyRank: Record<ProblemDifficulty, number> = {
   HARD: 2,
 };
 
-export function hashString(value: string) {
-  return Array.from(value).reduce((total, character) => total + character.charCodeAt(0), 0);
-}
-
 export function displayDifficulty(value: ProblemDifficulty) {
   return value.charAt(0) + value.slice(1).toLowerCase();
 }
@@ -44,13 +40,14 @@ export function displayLanguage(value: ProblemType) {
     JAVA: "JAVA",
     PYTHON: "Python",
     JAVASCRIPT: "JavaScript",
+    GO: "Go",
     CPP: "C++",
   };
 
   return labels[value];
 }
 
-export function trackForProblem(problem: ProblemSummary): ProblemTrack {
+export function trackForProblem(): ProblemTrack {
   return "Algorithms";
 }
 
@@ -65,23 +62,7 @@ export function statusForProblem(problem: ProblemSummary): CatalogStatus {
 }
 
 export function averageTimeForProblem(problem: ProblemSummary) {
-  if (problem.avgTimeMinutes !== undefined) {
-    return problem.avgTimeMinutes;
-  }
-
-  const seed = hashString(problem.id);
-
-  if (problem.difficulty === "HARD" || seed % 7 === 0) {
-    return null;
-  }
-
-  const baseTime: Record<ProblemDifficulty, number> = {
-    EASY: 14,
-    MEDIUM: 24,
-    HARD: 38,
-  };
-
-  return baseTime[problem.difficulty] + (seed % 9);
+  return problem.avgTimeMinutes ?? null;
 }
 
 export function displayProblemTitle(title: string) {
@@ -249,6 +230,37 @@ export function reviewLabel(review: ReviewState | undefined) {
     return "Tomorrow";
   }
   return `In ${diffDays}d`;
+}
+
+export function reviewDueLabel(review: ReviewState | undefined) {
+  if (!review) {
+    return "Due now";
+  }
+
+  const due = new Date(review.dueAt);
+  if (Number.isNaN(due.getTime())) {
+    return "Due date unavailable";
+  }
+
+  const remainingMs = due.getTime() - Date.now();
+  if (remainingMs <= 0 || review.status === "DUE") {
+    return "Due now";
+  }
+
+  const remainingHours = Math.ceil(remainingMs / 3_600_000);
+  if (remainingHours < 24) {
+    return `Due in ${remainingHours}h`;
+  }
+
+  const remainingDays = Math.ceil(remainingMs / 86_400_000);
+  if (remainingDays === 1) {
+    return "Due tomorrow";
+  }
+  if (remainingDays < 7) {
+    return `Due in ${remainingDays}d`;
+  }
+
+  return `Due ${new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(due)}`;
 }
 
 export function reviewTone(review: ReviewState | undefined) {

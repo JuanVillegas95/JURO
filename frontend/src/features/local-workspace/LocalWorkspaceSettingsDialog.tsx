@@ -1,963 +1,197 @@
 import { useEffect, useRef, useState } from "react";
-import type { ChangeEvent } from "react";
-import { Download, RefreshCw, Upload, X } from "lucide-react";
+import { Check, Copy, Download, Upload, X } from "lucide-react";
 import { FormSelect } from "../../components/ui/FormSelect";
-import {
-  exportProblemBank,
-  getAiStatus,
-  getLocalSettings,
-  getLocalToolingStatus,
-  getProblemBankFileSyncStatus,
-  importProblemBankSyncFile,
-  importProblemBank,
-  saveLocalSettings,
-  writeProblemBankSyncFile,
-} from "../../api";
-import type {
-  AiProvider,
-  LocalEditorPreference,
-  LocalAiStatus,
-  LocalToolingStatus,
-  LocalWorkspaceSettings,
-  ProblemBankExport,
-  ProblemBankFileSyncStatus,
-  ReviewFrequency,
-  TranscriptionProvider,
-} from "../../types";
+import { ErrorMessage } from "../../components/ErrorMessage";
+import { downloadLocalBackup, getLocalMcpConfig, getLocalMcpStatus, getLocalSettings, getLocalToolingStatus, restoreLocalBackup, saveLocalSettings } from "../../api";
+import type { LocalEditorPreference, LocalToolingStatus, LocalWorkspaceSettings, McpConfigResponse, McpStatus } from "../../types";
+
+type Props = {
+  onClose: () => void;
+  onSaved: (settings: LocalWorkspaceSettings) => void;
+  onRestored?: () => void;
+};
 
 const editorOptions = [
   { label: "VS Code", value: "VS_CODE" },
   { label: "Neovim", value: "NVIM" },
 ] as const;
 
-const transcriptionOptions = [
-  { label: "Browser speech", value: "BROWSER" },
-  { label: "Manual text", value: "MANUAL" },
-] as const;
-
-const aiProviderOptions = [
-  { label: "Ollama", value: "OLLAMA" },
-  { label: "Codex Adapter", value: "CODEX_ADAPTER" },
-  { label: "Anthropic Claude", value: "ANTHROPIC" },
-] as const;
-
-const aiProviderDefaults = {
-  OLLAMA: {
-    baseUrl: "http://localhost:11434",
-    model: "llama3.1",
-    apiKey: "",
-  },
-  CODEX_ADAPTER: {
-    baseUrl: "http://127.0.0.1:11435/v1/",
-    model: "gpt-5.4",
-    apiKey: "",
-  },
-  ANTHROPIC: {
-    baseUrl: "https://api.anthropic.com",
-    model: "claude-sonnet-4-20250514",
-    apiKey: "",
-  },
-} satisfies Record<AiProvider, { baseUrl: string; model: string; apiKey: string }>;
-
-const reviewFrequencyOptions = [
-  { label: "Less often", value: "LESS_OFTEN" },
-  { label: "Balanced", value: "BALANCED" },
-  { label: "More often", value: "MORE_OFTEN" },
-] as const;
-
-const schedulingDefaults = {
-  schedulerAlgorithm: "SM2",
-  reviewIntensity: "BALANCED",
-  codeReviewFrequency: "BALANCED",
-  explanationReviewFrequency: "BALANCED",
-  practiceFocus: "BALANCED",
-  minimumIntervalDays: 1,
-  maximumCodingIntervalDays: 180,
-  maximumExplanationIntervalDays: 90,
-} satisfies Pick<
-  LocalWorkspaceSettings,
-  | "schedulerAlgorithm"
-  | "reviewIntensity"
-  | "codeReviewFrequency"
-  | "explanationReviewFrequency"
-  | "practiceFocus"
-  | "minimumIntervalDays"
-  | "maximumCodingIntervalDays"
-  | "maximumExplanationIntervalDays"
->;
-
-type LocalWorkspaceSettingsDialogProps = {
-  onClose: () => void;
-  onProblemBankImported: () => void;
-  onSaved: (settings: LocalWorkspaceSettings) => void;
+const defaults: LocalWorkspaceSettings = {
+  workspaceDirectory: "",
+  editor: "VS_CODE",
+  editorPath: "",
+  javaRuntimePath: "",
+  javaCompilerPath: "",
+  pythonPath: "",
+  nodePath: "",
+  goPath: "",
 };
 
-export function LocalWorkspaceSettingsDialog({
-  onClose,
-  onProblemBankImported,
-  onSaved,
-}: LocalWorkspaceSettingsDialogProps) {
-  const importInputRef = useRef<HTMLInputElement | null>(null);
-  const [settings, setSettings] = useState<LocalWorkspaceSettings>({
-    workspaceDirectory: "",
-    editor: "VS_CODE",
-    customEditorCommand: "",
-    aiProvider: "OLLAMA",
-    aiBaseUrl: aiProviderDefaults.OLLAMA.baseUrl,
-    aiModel: aiProviderDefaults.OLLAMA.model,
-    aiApiKey: aiProviderDefaults.OLLAMA.apiKey,
-    ollamaBaseUrl: aiProviderDefaults.OLLAMA.baseUrl,
-    ollamaModel: aiProviderDefaults.OLLAMA.model,
-    transcriptionProvider: "BROWSER",
-    ...schedulingDefaults,
-    problemBankSyncEnabled: false,
-    problemBankSyncFilePath: "",
-  });
-  const [aiProviderDrafts, setAiProviderDrafts] = useState<Record<AiProvider, { baseUrl: string; model: string; apiKey: string }>>({
-    OLLAMA: aiProviderDefaults.OLLAMA,
-    CODEX_ADAPTER: aiProviderDefaults.CODEX_ADAPTER,
-    ANTHROPIC: aiProviderDefaults.ANTHROPIC,
-  });
-  const [toolingStatus, setToolingStatus] = useState<LocalToolingStatus | null>(null);
-  const [aiStatus, setAiStatus] = useState<LocalAiStatus | null>(null);
-  const [fileSyncStatus, setFileSyncStatus] = useState<ProblemBankFileSyncStatus | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [isSaving, setIsSaving] = useState(false);
-  const [isTestingAi, setIsTestingAi] = useState(false);
-  const [isExportingProblemBank, setIsExportingProblemBank] = useState(false);
-  const [isImportingProblemBank, setIsImportingProblemBank] = useState(false);
-  const [isWritingSyncFile, setIsWritingSyncFile] = useState(false);
-  const [isSyncingProblemBank, setIsSyncingProblemBank] = useState(false);
-  const [transferMessage, setTransferMessage] = useState<string | null>(null);
+export function LocalWorkspaceSettingsDialog({ onClose, onSaved, onRestored }: Props) {
+  const [settings, setSettings] = useState(defaults);
+  const [tooling, setTooling] = useState<LocalToolingStatus | null>(null);
+  const [mcpConfig, setMcpConfig] = useState<McpConfigResponse | null>(null);
+  const [mcpStatus, setMcpStatus] = useState<McpStatus | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [backupBusy, setBackupBusy] = useState(false);
+  const [backupMessage, setBackupMessage] = useState<string | null>(null);
+  const [backupError, setBackupError] = useState<string | null>(null);
+  const [toolingMessage, setToolingMessage] = useState<string | null>(null);
+  const backupInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     let active = true;
-
-    async function load() {
-      setIsLoading(true);
-      try {
-        const [loadedSettings, loadedTooling, loadedAi, loadedFileSyncStatus] = await Promise.all([
-          getLocalSettings(),
-          getLocalToolingStatus(),
-          getAiStatus(),
-          getProblemBankFileSyncStatus(),
-        ]);
-        if (active) {
-          const normalizedSettings = withSettingsDefaults(loadedSettings);
-          setSettings(normalizedSettings);
-          setAiProviderDrafts(aiDraftsFromSettings(normalizedSettings));
-          setToolingStatus(loadedTooling);
-          setAiStatus(loadedAi);
-          setFileSyncStatus(loadedFileSyncStatus);
-          setError(null);
-        }
-      } catch (loadError) {
-        if (active) {
-          setError(loadError instanceof Error ? loadError.message : "Unable to load local workspace settings.");
-        }
-      } finally {
-        if (active) {
-          setIsLoading(false);
-        }
-      }
-    }
-
-    void load();
-
+    Promise.all([getLocalSettings(), getLocalToolingStatus(), getLocalMcpConfig(), getLocalMcpStatus()])
+      .then(([loaded, loadedTooling, loadedMcpConfig, loadedMcpStatus]) => {
+        if (!active) return;
+        setSettings({ ...defaults, ...loaded });
+        setTooling(loadedTooling);
+        setMcpConfig(loadedMcpConfig);
+        setMcpStatus(loadedMcpStatus);
+      })
+      .catch((loadError) => active && setError(loadError instanceof Error ? loadError.message : "Unable to load settings."))
+      .finally(() => active && setLoading(false));
     return () => {
       active = false;
     };
   }, []);
 
-  useEffect(() => {
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        onClose();
-      }
-    }
-
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [onClose]);
-
-  async function persistSettingsDraft() {
-    const validationError = schedulingValidationError(settings);
-    if (validationError) {
-      throw new Error(validationError);
-    }
-
-    const saved = await saveLocalSettings(settings);
-    const normalizedSaved = withSettingsDefaults(saved);
-    setSettings(normalizedSaved);
-    onSaved(normalizedSaved);
-    return normalizedSaved;
-  }
-
-  async function handleSave() {
-    setIsSaving(true);
+  async function save() {
+    setSaving(true);
     setError(null);
-
     try {
-      await persistSettingsDraft();
-      const [refreshedTooling, refreshedFileSyncStatus] = await Promise.all([
-        getLocalToolingStatus(),
-        getProblemBankFileSyncStatus(),
-      ]);
-      setToolingStatus(refreshedTooling);
-      setFileSyncStatus(refreshedFileSyncStatus);
+      const saved = await saveLocalSettings(settings);
+      onSaved(saved);
       onClose();
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : "Unable to save local workspace settings.");
+      setError(saveError instanceof Error ? saveError.message : "Unable to save settings.");
     } finally {
-      setIsSaving(false);
+      setSaving(false);
     }
   }
 
-  async function handleTestAi() {
-    const validationError = schedulingValidationError(settings);
-    if (validationError) {
-      setError(validationError);
-      return;
-    }
-
-    setIsTestingAi(true);
-    setError(null);
-
+  async function copyMcpConfig() {
+    if (!mcpConfig) return;
     try {
-      await persistSettingsDraft();
-      setAiStatus(await getAiStatus());
-    } catch (testError) {
-      setError(testError instanceof Error ? testError.message : "Unable to test AI evaluator connection.");
+      await navigator.clipboard.writeText(mcpConfig.configJson);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1800);
+    } catch {
+      setError("Unable to copy the MCP configuration. Select and copy it manually.");
+    }
+  }
+
+  async function checkTooling() {
+    setSaving(true);
+    setError(null);
+    setToolingMessage(null);
+    try {
+      const saved = await saveLocalSettings(settings);
+      const refreshedTooling = await getLocalToolingStatus();
+      setSettings(saved);
+      setTooling(refreshedTooling);
+      onSaved(saved);
+      setToolingMessage("Paths checked. Blank fields use automatic PATH detection.");
+    } catch (checkError) {
+      setError(checkError instanceof Error ? checkError.message : "Unable to check local tool paths.");
     } finally {
-      setIsTestingAi(false);
+      setSaving(false);
     }
   }
 
-  function resetSchedulingDefaults() {
-    setSettings((current) => ({
-      ...current,
-      ...schedulingDefaults,
-    }));
-    setError(null);
-  }
-
-  async function handleExportProblemBank() {
-    setIsExportingProblemBank(true);
-    setTransferMessage(null);
-    setError(null);
-
+  async function exportBackup() {
+    setBackupBusy(true);
+    setBackupError(null);
+    setBackupMessage(null);
     try {
-      const snapshot = await exportProblemBank();
-      const datePart = new Date().toISOString().slice(0, 10);
-      const blob = new Blob([JSON.stringify(snapshot, null, 2)], { type: "application/json" });
+      const { blob, filename } = await downloadLocalBackup();
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
       anchor.href = url;
-      anchor.download = `juro-problem-bank-${datePart}.json`;
-      document.body.append(anchor);
+      anchor.download = filename;
+      document.body.appendChild(anchor);
       anchor.click();
       anchor.remove();
       URL.revokeObjectURL(url);
-      setTransferMessage(`Exported ${snapshot.problems.length} ${snapshot.problems.length === 1 ? "problem" : "problems"}.`);
-    } catch (exportError) {
-      setError(exportError instanceof Error ? exportError.message : "Unable to export problem bank.");
+      setBackupMessage(`Backup downloaded: ${filename}`);
+    } catch (backupLoadError) {
+      setBackupError(backupLoadError instanceof Error ? backupLoadError.message : "Unable to export the JURO database.");
     } finally {
-      setIsExportingProblemBank(false);
+      setBackupBusy(false);
     }
   }
 
-  async function handleImportProblemBank(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    if (!file) {
+  async function importBackup(file: File | undefined) {
+    if (!file) return;
+    if (!window.confirm("Restore this backup? JURO will create a safety copy of the current database before replacing it.")) {
+      if (backupInputRef.current) backupInputRef.current.value = "";
       return;
     }
-
-    setIsImportingProblemBank(true);
-    setTransferMessage(null);
-    setError(null);
-
+    setBackupBusy(true);
+    setBackupError(null);
+    setBackupMessage(null);
     try {
-      const parsed = JSON.parse(await file.text()) as ProblemBankExport;
-      const result = await importProblemBank(parsed);
-      onProblemBankImported();
-      setTransferMessage(
-        `Imported ${result.created + result.updated} problems, ${result.reviewStatesImported} review schedules, and ${result.submissionsImported} submissions.`,
-      );
-    } catch (importError) {
-      const message = importError instanceof Error ? importError.message : "Unable to import problem bank.";
-      setError(message);
+      const restored = await restoreLocalBackup(file);
+      setBackupMessage(`Restored ${restored.summary.problems} problem${restored.summary.problems === 1 ? "" : "s"}. Safety copy: ${restored.safetyBackupFile}`);
+      onRestored?.();
+    } catch (restoreError) {
+      setBackupError(restoreError instanceof Error ? restoreError.message : "Unable to restore the JURO database.");
     } finally {
-      setIsImportingProblemBank(false);
-      event.target.value = "";
+      setBackupBusy(false);
+      if (backupInputRef.current) backupInputRef.current.value = "";
     }
   }
 
-  async function handleWriteSyncFile() {
-    setIsWritingSyncFile(true);
-    setTransferMessage(null);
-    setError(null);
-
-    try {
-      await persistSettingsDraft();
-      const status = await writeProblemBankSyncFile();
-      setFileSyncStatus(status);
-      setTransferMessage(status.lastImportSummary ?? "Wrote current problem bank snapshot to the live JSON file.");
-    } catch (syncError) {
-      setError(syncError instanceof Error ? syncError.message : "Unable to write problem bank sync file.");
-    } finally {
-      setIsWritingSyncFile(false);
-    }
+  if (loading) {
+    return <div className="settings-dialog-backdrop"><section className="settings-dialog" role="dialog"><div className="empty-state">Loading settings…</div></section></div>;
   }
-
-  async function handleSyncNow() {
-    setIsSyncingProblemBank(true);
-    setTransferMessage(null);
-    setError(null);
-
-    try {
-      await persistSettingsDraft();
-      const status = await importProblemBankSyncFile();
-      setFileSyncStatus(status);
-      if (status.lastError) {
-        setError(status.lastError);
-        return;
-      }
-      onProblemBankImported();
-      setTransferMessage(status.lastImportSummary ?? "Imported problem bank from the live JSON file.");
-    } catch (syncError) {
-      setError(syncError instanceof Error ? syncError.message : "Unable to sync problem bank JSON file.");
-    } finally {
-      setIsSyncingProblemBank(false);
-    }
-  }
-
-  function setNumericSetting(
-    key: "minimumIntervalDays" | "maximumCodingIntervalDays" | "maximumExplanationIntervalDays",
-    value: string,
-  ) {
-    const parsed = Number.parseInt(value, 10);
-    setSettings((current) => ({
-      ...current,
-      [key]: Number.isNaN(parsed) ? 0 : parsed,
-    }));
-  }
-
-  function setAiProvider(aiProvider: AiProvider) {
-    const nextDrafts = {
-      ...aiProviderDrafts,
-      [settings.aiProvider]: {
-        baseUrl: settings.aiBaseUrl,
-        model: settings.aiModel,
-        apiKey: settings.aiApiKey,
-      },
-    };
-    const nextProviderSettings = nextDrafts[aiProvider];
-    setAiProviderDrafts(nextDrafts);
-    setSettings((current) => ({
-      ...current,
-      aiProvider,
-      aiBaseUrl: nextProviderSettings.baseUrl,
-      aiModel: nextProviderSettings.model,
-      aiApiKey: nextProviderSettings.apiKey,
-      ollamaBaseUrl: nextDrafts.OLLAMA.baseUrl,
-      ollamaModel: nextDrafts.OLLAMA.model,
-    }));
-    setAiStatus(null);
-  }
-
-  function updateAiBaseUrl(aiBaseUrl: string) {
-    setAiProviderDrafts((current) => ({
-      ...current,
-      [settings.aiProvider]: {
-        ...current[settings.aiProvider],
-        baseUrl: aiBaseUrl,
-      },
-    }));
-    setSettings((current) => ({
-      ...current,
-      aiBaseUrl,
-      ...(current.aiProvider === "OLLAMA" ? { ollamaBaseUrl: aiBaseUrl } : {}),
-    }));
-  }
-
-  function updateAiModel(aiModel: string) {
-    setAiProviderDrafts((current) => ({
-      ...current,
-      [settings.aiProvider]: {
-        ...current[settings.aiProvider],
-        model: aiModel,
-      },
-    }));
-    setSettings((current) => ({
-      ...current,
-      aiModel,
-      ...(current.aiProvider === "OLLAMA" ? { ollamaModel: aiModel } : {}),
-    }));
-  }
-
-  function updateAiApiKey(aiApiKey: string) {
-    setAiProviderDrafts((current) => ({
-      ...current,
-      [settings.aiProvider]: {
-        ...current[settings.aiProvider],
-        apiKey: aiApiKey,
-      },
-    }));
-    setSettings((current) => ({
-      ...current,
-      aiApiKey,
-    }));
-  }
-
-  const syncActionsDisabled =
-    !settings.problemBankSyncEnabled ||
-    !settings.problemBankSyncFilePath.trim() ||
-    isWritingSyncFile ||
-    isSyncingProblemBank;
 
   return (
-    <div
-      className="settings-dialog-backdrop"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) {
-          onClose();
-        }
-      }}
-    >
+    <div className="settings-dialog-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
       <section aria-label="Local workspace settings" aria-modal="true" className="settings-dialog" role="dialog">
         <header className="settings-dialog__header">
-          <div>
-            <h2>Settings</h2>
-            <p>Local workspace</p>
-          </div>
-          <button aria-label="Close settings" className="icon-button" onClick={onClose} type="button">
-            <X size={17} strokeWidth={2.35} />
-          </button>
+          <div><h2>Settings</h2><p>Workspace &amp; MCP</p></div>
+          <button aria-label="Close settings" className="icon-button" onClick={onClose} type="button"><X size={17} /></button>
         </header>
-
         <div className="settings-dialog__body">
-          {isLoading ? <div className="empty-state">Loading settings…</div> : null}
-          {error ? <div className="error-banner">{error}</div> : null}
-
-          {!isLoading ? (
-            <>
-              <label className="settings-field">
-                <span>Workspace directory</span>
-                <input
-                  placeholder="/Users/me/dev/juro-workspace"
-                  value={settings.workspaceDirectory}
-                  onChange={(event) =>
-                    setSettings((current) => ({ ...current, workspaceDirectory: event.target.value }))
-                  }
-                />
-                <small>JURO rebuilds one current problem workspace inside this directory.</small>
-              </label>
-
-              <label className="settings-field">
-                <span>Preferred editor</span>
-                <FormSelect<LocalEditorPreference>
-                  ariaLabel="Preferred code editor"
-                  onValueChange={(editor) => setSettings((current) => ({ ...current, editor }))}
-                  options={editorOptions}
-                  value={settings.editor}
-                />
-                <small>VS Code uses a dedicated JURO workspace window. Neovim opens the scaffold in your terminal.</small>
-              </label>
-
-              <section className="settings-section" aria-label="AI evaluation settings">
-                <div className="settings-section__header">
-                  <div>
-                    <h3>AI Evaluation</h3>
-                    <p>
-                      Used for verbal knowledge checks. Choose Ollama for local models, Codex Adapter for a local
-                      OpenAI-compatible endpoint, or Anthropic Claude with an API key.
-                    </p>
-                  </div>
-                  <button
-                    className="button button--ghost button--sm"
-                    disabled={isTestingAi}
-                    onClick={handleTestAi}
-                    type="button"
-                  >
-                    <RefreshCw size={14} />
-                    Test
-                  </button>
-                </div>
-
-                <label className="settings-field">
-                  <span>AI provider</span>
-                  <FormSelect<AiProvider>
-                    ariaLabel="AI evaluation provider"
-                    onValueChange={setAiProvider}
-                    options={aiProviderOptions}
-                    value={settings.aiProvider}
-                  />
-                  <small>
-                    {settings.aiProvider === "ANTHROPIC" ? (
-                      <>
-                        Anthropic Claude uses the official Messages API with your API key.
-                      </>
-                    ) : settings.aiProvider === "CODEX_ADAPTER" ? (
-                      <>
-                        Codex Adapter expects an OpenAI-compatible URL, usually <code>http://127.0.0.1:11435/v1/</code>.
-                      </>
-                    ) : (
-                      <>
-                        Ollama usually listens on <code>http://localhost:11434</code>.
-                      </>
-                    )}
-                  </small>
-                </label>
-
-                <label className="settings-field">
-                  <span>{aiProviderBaseUrlLabel(settings.aiProvider)}</span>
-                  <input
-                    placeholder={aiProviderDefaults[settings.aiProvider].baseUrl}
-                    value={settings.aiBaseUrl}
-                    onChange={(event) => updateAiBaseUrl(event.target.value)}
-                  />
-                </label>
-
-                <label className="settings-field">
-                  <span>Model name</span>
-                  <input
-                    placeholder={aiProviderDefaults[settings.aiProvider].model}
-                    value={settings.aiModel}
-                    onChange={(event) => updateAiModel(event.target.value)}
-                  />
-                  <small>
-                    {settings.aiProvider === "ANTHROPIC"
-                      ? "Example: claude-sonnet-4-20250514."
-                      : settings.aiProvider === "CODEX_ADAPTER"
-                        ? "Example: gpt-5.4 or gpt-5-mini through the OCA API Adapter."
-                        : "Example: llama3.1, qwen2.5, or another model installed in Ollama."}
-                  </small>
-                </label>
-
-                {settings.aiProvider === "ANTHROPIC" ? (
-                  <label className="settings-field">
-                    <span>Anthropic API key</span>
-                    <input
-                      autoComplete="off"
-                      placeholder="sk-ant-..."
-                      type="password"
-                      value={settings.aiApiKey}
-                      onChange={(event) => updateAiApiKey(event.target.value)}
-                    />
-                    <small>The key is saved in JURO local settings on this machine.</small>
-                  </label>
-                ) : null}
-
-                <label className="settings-field">
-                  <span>Transcription provider</span>
-                  <FormSelect<TranscriptionProvider>
-                    ariaLabel="Transcription provider"
-                    onValueChange={(transcriptionProvider) =>
-                      setSettings((current) => ({ ...current, transcriptionProvider }))
-                    }
-                    options={transcriptionOptions}
-                    value={settings.transcriptionProvider}
-                  />
-                  <small>The AI evaluator reads text. Browser speech recognition or manual input creates the transcript.</small>
-                </label>
-
-                {aiStatus ? (
-                  <div className="tooling-status">
-                    <ToolingRow
-                      label={aiProviderStatusLabel(settings.aiProvider)}
-                      ok={aiStatus.available}
-                      value={aiStatus.message}
-                    />
-                    <ToolingRow
-                      label="Model"
-                      ok={aiStatus.available && (aiStatus.models.length === 0 || aiStatus.models.includes(settings.aiModel))}
-                      value={aiStatus.selectedModel}
-                    />
-                  </div>
-                ) : null}
-              </section>
-
-              <section className="settings-section" aria-label="Spaced repetition settings">
-                <div className="settings-section__header">
-                  <div>
-                    <h3>Spaced Repetition</h3>
-                    <p>
-                      JURO schedules reviews using a spaced repetition system inspired by Anki. Passing a review
-                      increases the interval before the problem appears again. Marking a review as needing work brings
-                      it back sooner.
-                    </p>
-                  </div>
-                  <button className="button button--ghost button--sm" onClick={resetSchedulingDefaults} type="button">
-                    Reset defaults
-                  </button>
-                </div>
-
-                <div className="settings-copy-grid">
-                  <section className="settings-copy-panel">
-                    <h4>How JURO Decides What To Review</h4>
-                    <p>
-                      Each problem has two independent schedules: Code and Explain. When you pass, JURO increases the
-                      interval before the next review. When you mark a review as needing work, JURO brings it back
-                      sooner. Problems that are due, recently failed, or still new rise higher in the Problem Bank.
-                    </p>
-                  </section>
-                  <section className="settings-copy-panel">
-                    <h4>Recommended Scientific Default</h4>
-                    <p>
-                      The recommended default is a balanced SM-2 style schedule. This is inspired by spaced repetition
-                      research and systems like Anki: review shortly after learning, then gradually increase the
-                      interval after successful recall. The best schedule can vary by learner.
-                    </p>
-                  </section>
-                </div>
-
-                <section className="settings-copy-panel settings-copy-panel--compact">
-                  <h4>Scheduling algorithm</h4>
-                  <p>
-                    JURO uses an SM-2 style scheduler inspired by the original SuperMemo and Anki approach. It increases
-                    review intervals after successful recalls and shortens them after failures. Explanation reviews are
-                    naturally shorter than coding reviews because explaining is faster than a full implementation. Tune
-                    each track directly with the two frequency controls below.
-                  </p>
-                </section>
-
-                <div className="settings-control-grid">
-                  <label className="settings-field">
-                    <span>Code review frequency</span>
-                    <FormSelect<ReviewFrequency>
-                      ariaLabel="Code review frequency"
-                      onValueChange={(codeReviewFrequency) =>
-                        setSettings((current) => ({ ...current, codeReviewFrequency }))
-                      }
-                      options={reviewFrequencyOptions}
-                      value={settings.codeReviewFrequency}
-                    />
-                    <small>Use More often if you want to re-implement problems more frequently.</small>
-                  </label>
-
-                  <label className="settings-field">
-                    <span>Explanation review frequency</span>
-                    <FormSelect<ReviewFrequency>
-                      ariaLabel="Explanation review frequency"
-                      onValueChange={(explanationReviewFrequency) =>
-                        setSettings((current) => ({ ...current, explanationReviewFrequency }))
-                      }
-                      options={reviewFrequencyOptions}
-                      value={settings.explanationReviewFrequency}
-                    />
-                    <small>Use More often to strengthen conceptual recall through quick verbal reviews.</small>
-                  </label>
-                </div>
-
-                <details className="settings-advanced">
-                  <summary>Advanced intervals</summary>
-                  <div className="settings-number-grid">
-                    <label className="settings-field">
-                      <span>Minimum interval</span>
-                      <input
-                        min={1}
-                        type="number"
-                        value={settings.minimumIntervalDays}
-                        onChange={(event) => setNumericSetting("minimumIntervalDays", event.target.value)}
-                      />
-                      <small>Prevents reviews from appearing too aggressively.</small>
-                    </label>
-                    <label className="settings-field">
-                      <span>Max coding interval</span>
-                      <input
-                        min={settings.minimumIntervalDays}
-                        type="number"
-                        value={settings.maximumCodingIntervalDays}
-                        onChange={(event) => setNumericSetting("maximumCodingIntervalDays", event.target.value)}
-                      />
-                    </label>
-                    <label className="settings-field">
-                      <span>Max explanation interval</span>
-                      <input
-                        min={settings.minimumIntervalDays}
-                        type="number"
-                        value={settings.maximumExplanationIntervalDays}
-                        onChange={(event) => setNumericSetting("maximumExplanationIntervalDays", event.target.value)}
-                      />
-                    </label>
-                  </div>
-                </details>
-              </section>
-
-              <section className="settings-section" aria-label="Problem bank backup">
-                <div className="settings-section__header">
-                  <div>
-                    <h3>Problem Bank Backup</h3>
-                    <p>
-                      Export or import problems with examples, test cases, review due dates, spaced repetition progress,
-                      and submission history.
-                    </p>
-                  </div>
-                </div>
-
-                <div className="settings-actions-row">
-                  <button
-                    className="button button--ghost button--sm"
-                    disabled={isExportingProblemBank || isImportingProblemBank}
-                    onClick={handleExportProblemBank}
-                    type="button"
-                  >
-                    <Download size={14} />
-                    {isExportingProblemBank ? "Exporting..." : "Export bank"}
-                  </button>
-                  <button
-                    className="button button--ghost button--sm"
-                    disabled={isExportingProblemBank || isImportingProblemBank}
-                    onClick={() => importInputRef.current?.click()}
-                    type="button"
-                  >
-                    <Upload size={14} />
-                    {isImportingProblemBank ? "Importing..." : "Import bank"}
-                  </button>
-                  <input
-                    ref={importInputRef}
-                    accept="application/json,.json"
-                    className="settings-file-input"
-                    onChange={handleImportProblemBank}
-                    type="file"
-                  />
-                </div>
-
-                <div className="settings-sync-group">
-                  <label className="settings-toggle-row">
-                    <input
-                      checked={settings.problemBankSyncEnabled}
-                      onChange={(event) =>
-                        setSettings((current) => ({
-                          ...current,
-                          problemBankSyncEnabled: event.target.checked,
-                        }))
-                      }
-                      type="checkbox"
-                    />
-                    <span>Live JSON sync</span>
-                  </label>
-
-                  <label className="settings-field">
-                    <span>Live JSON file</span>
-                    <input
-                      placeholder="/Users/me/juro-workspace/juro-problem-bank.json"
-                      value={settings.problemBankSyncFilePath}
-                      onChange={(event) =>
-                        setSettings((current) => ({ ...current, problemBankSyncFilePath: event.target.value }))
-                      }
-                    />
-                    <small>Save a snapshot to this path, then edit it in your editor. JURO imports changes automatically.</small>
-                  </label>
-
-                  <div className="settings-actions-row">
-                    <button
-                      className="button button--ghost button--sm"
-                      disabled={syncActionsDisabled}
-                      onClick={handleWriteSyncFile}
-                      type="button"
-                    >
-                      <Download size={14} />
-                      {isWritingSyncFile ? "Writing..." : "Write sync file"}
-                    </button>
-                    <button
-                      className="button button--ghost button--sm"
-                      disabled={syncActionsDisabled}
-                      onClick={handleSyncNow}
-                      type="button"
-                    >
-                      <RefreshCw size={14} />
-                      {isSyncingProblemBank ? "Syncing..." : "Sync now"}
-                    </button>
-                  </div>
-
-                  {fileSyncStatus?.enabled ? (
-                    <div className="tooling-status" aria-label="Problem bank JSON sync status">
-                      <ToolingRow
-                        label="JSON sync"
-                        ok={fileSyncStatus.synced || Boolean(fileSyncStatus.fileExists && !fileSyncStatus.lastError)}
-                        value={fileSyncStatusText(fileSyncStatus)}
-                      />
-                      {fileSyncStatus.lastImportedAt ? (
-                        <ToolingRow
-                          label="Last sync"
-                          ok={!fileSyncStatus.lastError}
-                          value={new Date(fileSyncStatus.lastImportedAt).toLocaleString()}
-                        />
-                      ) : null}
-                    </div>
-                  ) : null}
-                </div>
-
-                {transferMessage ? <div className="settings-transfer-message">{transferMessage}</div> : null}
-              </section>
-
-              {toolingStatus ? (
-                <section className="tooling-status" aria-label="Local tooling status">
-                  <ToolingRow label="Workspace" ok={toolingStatus.workspaceWritable} value={toolingStatus.workspaceDirectory} />
-                  <ToolingRow
-                    label="Java"
-                    ok={toolingStatus.javaRuntime.available}
-                    value={toolingStatus.javaRuntime.version || toolingStatus.javaRuntime.detail}
-                  />
-                  <ToolingRow
-                    label="javac"
-                    ok={toolingStatus.javaCompiler.available}
-                    value={toolingStatus.javaCompiler.version || toolingStatus.javaCompiler.detail}
-                  />
-                  <ToolingRow
-                    label="Maven"
-                    ok={toolingStatus.maven.available}
-                    value={toolingStatus.maven.version || toolingStatus.maven.detail}
-                  />
-                </section>
-              ) : null}
-            </>
-          ) : null}
+          {error ? <ErrorMessage className="error-banner" error={error} /> : null}
+          <label className="settings-field"><span>Workspace directory</span><input value={settings.workspaceDirectory} onChange={(event) => setSettings((current) => ({ ...current, workspaceDirectory: event.target.value }))} /><small>Generated problem workspaces are stored here.</small></label>
+          <label className="settings-field"><span>Preferred editor</span><FormSelect<LocalEditorPreference> ariaLabel="Preferred code editor" options={editorOptions} value={settings.editor} onValueChange={(editor) => setSettings((current) => ({ ...current, editor }))} /></label>
+          <section className="settings-section settings-tool-paths" aria-label="Local executable paths">
+            <div className="settings-section__header"><div><h3>Executable paths</h3><p>Leave blank to use automatic PATH detection.</p></div></div>
+            <div className="settings-path-grid">
+              <ToolPathField label={`${settings.editor === "VS_CODE" ? "VS Code" : "Neovim"} executable`} placeholder={settings.editor === "VS_CODE" ? "code or /path/to/code" : "nvim or /path/to/nvim"} value={settings.editorPath} onChange={(editorPath) => setSettings((current) => ({ ...current, editorPath }))} />
+              <ToolPathField label="Java runtime (java)" placeholder="java or /path/to/java" value={settings.javaRuntimePath} onChange={(javaRuntimePath) => setSettings((current) => ({ ...current, javaRuntimePath }))} />
+              <ToolPathField label="Java compiler (javac)" placeholder="javac or /path/to/javac" value={settings.javaCompilerPath} onChange={(javaCompilerPath) => setSettings((current) => ({ ...current, javaCompilerPath }))} />
+              <ToolPathField label="Python" placeholder="python3 or /path/to/python3" value={settings.pythonPath} onChange={(pythonPath) => setSettings((current) => ({ ...current, pythonPath }))} />
+              <ToolPathField label="Node.js" placeholder="node or /path/to/node" value={settings.nodePath} onChange={(nodePath) => setSettings((current) => ({ ...current, nodePath }))} />
+              <ToolPathField label="Go" placeholder="go or /path/to/go" value={settings.goPath} onChange={(goPath) => setSettings((current) => ({ ...current, goPath }))} />
+            </div>
+            <div className="settings-path-actions"><button className="button button--ghost button--sm" disabled={saving} onClick={() => void checkTooling()} type="button">Check paths</button>{toolingMessage ? <small>{toolingMessage}</small> : null}</div>
+          </section>
+          <section className="settings-section" aria-label="MCP connection settings">
+            <div className="settings-section__header"><div><h3>Claude / MCP</h3><p>Local MCP server.</p></div><span className="status-pill status-pill--success">{mcpStatus?.configured ? "Configured" : "Unavailable"}</span></div>
+            <p className="settings-section__note">Paste into Claude's MCP config.</p>
+            <pre className="settings-code-block"><code>{mcpConfig?.configJson ?? "MCP configuration unavailable."}</code></pre>
+            <button className="button button--ghost" disabled={!mcpConfig} onClick={() => void copyMcpConfig()} type="button">{copied ? <Check size={14} /> : <Copy size={14} />}{copied ? "Copied" : "Copy"}</button>
+            <small>{mcpStatus?.configured ? "Ready." : "Unavailable."}</small>
+          </section>
+          {tooling ? <section className="settings-section" aria-label="Local tooling status"><div className="settings-section__header"><div><h3>Local tooling</h3></div></div><table className="settings-tooling-table"><thead><tr><th>Tool</th><th>Available</th><th>Notes</th></tr></thead><tbody><ToolingRow label="Java" available={tooling.javaRuntime.available && tooling.javaCompiler.available} notes={!tooling.javaRuntime.available ? tooling.javaRuntime.detail : !tooling.javaCompiler.available ? tooling.javaCompiler.detail : undefined} /><ToolingRow label="Python" available={tooling.python.available} notes={!tooling.python.available ? tooling.python.detail : undefined} /><ToolingRow label="Node.js" available={tooling.node.available} notes={!tooling.node.available ? tooling.node.detail : undefined} /><ToolingRow label="Go" available={tooling.go.available} notes={!tooling.go.available ? tooling.go.detail : undefined} /><ToolingRow label="Maven" available={tooling.maven.available} notes={tooling.maven.available ? "Optional" : tooling.maven.detail} /></tbody></table></section> : null}
+          <section className="settings-section settings-backup" aria-label="Data backup"><div className="settings-section__header"><div><h3>Data backup</h3><p>Export or restore your local SQLite progress.</p></div></div><div className="settings-backup__actions"><button className="button button--ghost" disabled={backupBusy} onClick={() => void exportBackup()} type="button"><Download size={14} />{backupBusy ? "Working…" : "Export database"}</button><button className="button button--ghost" disabled={backupBusy} onClick={() => backupInputRef.current?.click()} type="button"><Upload size={14} />Import database</button><input ref={backupInputRef} accept=".sqlite,.sqlite3,application/vnd.sqlite3,application/x-sqlite3" className="visually-hidden" onChange={(event) => void importBackup(event.target.files?.[0])} type="file" /></div><small>Import creates a safety copy before replacing the current database.</small>{backupError ? <ErrorMessage className="settings-backup__error" error={backupError} /> : null}{backupMessage ? <p className="settings-backup__message">{backupMessage}</p> : null}</section>
         </div>
-
-        <footer className="settings-dialog__footer">
-          <button className="delete-confirmation__cancel" onClick={onClose} type="button">
-            Cancel
-          </button>
-          <button className="button button--primary button--sm" disabled={isSaving} onClick={handleSave} type="button">
-            {isSaving ? "Saving…" : "Save settings"}
-          </button>
-        </footer>
+        <footer className="settings-dialog__footer"><button className="button button--ghost" onClick={onClose} type="button">Cancel</button><button className="button button--primary" disabled={saving} onClick={() => void save()} type="button">{saving ? "Saving…" : "Save settings"}</button></footer>
       </section>
     </div>
   );
 }
 
-function schedulingValidationError(settings: LocalWorkspaceSettings) {
-  if (settings.minimumIntervalDays < 1) {
-    return "Minimum review interval must be at least 1 day.";
-  }
-
-  if (settings.maximumCodingIntervalDays < settings.minimumIntervalDays) {
-    return "Max coding interval must be greater than or equal to the minimum interval.";
-  }
-
-  if (settings.maximumExplanationIntervalDays < settings.minimumIntervalDays) {
-    return "Max explanation interval must be greater than or equal to the minimum interval.";
-  }
-
-  return null;
+function ToolingRow({ label, available, notes }: { label: string; available: boolean; notes?: string }) {
+  return <tr><th scope="row">{label}</th><td><span className={`tooling-mark tooling-mark--${available ? "available" : "missing"}`} aria-label={available ? "Available" : "Unavailable"}>{available ? "✓" : "—"}</span></td><td>{notes ?? (available ? "Ready" : "Unavailable")}</td></tr>;
 }
 
-function aiProviderBaseUrlLabel(provider: AiProvider) {
-  if (provider === "ANTHROPIC") {
-    return "Anthropic base URL";
-  }
-  if (provider === "CODEX_ADAPTER") {
-    return "Codex Adapter base URL";
-  }
-  return "Ollama base URL";
-}
-
-function aiProviderStatusLabel(provider: AiProvider) {
-  if (provider === "ANTHROPIC") {
-    return "Anthropic";
-  }
-  if (provider === "CODEX_ADAPTER") {
-    return "Codex Adapter";
-  }
-  return "Ollama";
-}
-
-function fileSyncStatusText(status: ProblemBankFileSyncStatus) {
-  if (status.importInProgress) {
-    return "Importing live JSON file.";
-  }
-  if (status.lastError) {
-    return status.lastError;
-  }
-  if (!status.fileExists) {
-    return "File not found.";
-  }
-  if (status.synced) {
-    return status.lastImportSummary ?? "Live JSON file is synced.";
-  }
-  return "Watching for changes.";
-}
-
-function withSettingsDefaults(settings: LocalWorkspaceSettings): LocalWorkspaceSettings {
-  const aiProvider = settings.aiProvider ?? "OLLAMA";
-  const editor = settings.editor === "NVIM" || settings.editor === "VS_CODE" ? settings.editor : "VS_CODE";
-  const transcriptionProvider = settings.transcriptionProvider === "MANUAL" ? "MANUAL" : "BROWSER";
-  const activeBaseUrl =
-    settings.aiBaseUrl ??
-    (aiProvider === "OLLAMA" ? settings.ollamaBaseUrl : undefined) ??
-    aiProviderDefaults[aiProvider].baseUrl;
-  const activeModel =
-    settings.aiModel ??
-    (aiProvider === "OLLAMA" ? settings.ollamaModel : undefined) ??
-    aiProviderDefaults[aiProvider].model;
-  const activeApiKey = settings.aiApiKey ?? (aiProvider === "ANTHROPIC" ? aiProviderDefaults.ANTHROPIC.apiKey : "");
-  return {
-    ...settings,
-    editor,
-    customEditorCommand: "",
-    aiProvider,
-    aiBaseUrl: activeBaseUrl,
-    aiModel: activeModel,
-    aiApiKey: activeApiKey,
-    ollamaBaseUrl:
-      settings.ollamaBaseUrl ??
-      (aiProvider === "OLLAMA" ? activeBaseUrl : undefined) ??
-      aiProviderDefaults.OLLAMA.baseUrl,
-    ollamaModel:
-      settings.ollamaModel ??
-      (aiProvider === "OLLAMA" ? activeModel : undefined) ??
-      aiProviderDefaults.OLLAMA.model,
-    transcriptionProvider,
-    schedulerAlgorithm: settings.schedulerAlgorithm ?? schedulingDefaults.schedulerAlgorithm,
-    reviewIntensity: schedulingDefaults.reviewIntensity,
-    codeReviewFrequency: settings.codeReviewFrequency ?? schedulingDefaults.codeReviewFrequency,
-    explanationReviewFrequency: settings.explanationReviewFrequency ?? schedulingDefaults.explanationReviewFrequency,
-    practiceFocus: schedulingDefaults.practiceFocus,
-    minimumIntervalDays: settings.minimumIntervalDays ?? schedulingDefaults.minimumIntervalDays,
-    maximumCodingIntervalDays: settings.maximumCodingIntervalDays ?? schedulingDefaults.maximumCodingIntervalDays,
-    maximumExplanationIntervalDays:
-      settings.maximumExplanationIntervalDays ?? schedulingDefaults.maximumExplanationIntervalDays,
-    problemBankSyncEnabled: settings.problemBankSyncEnabled ?? false,
-    problemBankSyncFilePath: settings.problemBankSyncFilePath ?? "",
-  };
-}
-
-function aiDraftsFromSettings(settings: LocalWorkspaceSettings): Record<AiProvider, { baseUrl: string; model: string; apiKey: string }> {
-  return {
-    OLLAMA: {
-      baseUrl:
-        settings.ollamaBaseUrl ??
-        (settings.aiProvider === "OLLAMA" ? settings.aiBaseUrl : undefined) ??
-        aiProviderDefaults.OLLAMA.baseUrl,
-      model:
-        settings.ollamaModel ??
-        (settings.aiProvider === "OLLAMA" ? settings.aiModel : undefined) ??
-        aiProviderDefaults.OLLAMA.model,
-      apiKey: "",
-    },
-    CODEX_ADAPTER: {
-      baseUrl: settings.aiProvider === "CODEX_ADAPTER" ? settings.aiBaseUrl : aiProviderDefaults.CODEX_ADAPTER.baseUrl,
-      model: settings.aiProvider === "CODEX_ADAPTER" ? settings.aiModel : aiProviderDefaults.CODEX_ADAPTER.model,
-      apiKey: settings.aiProvider === "CODEX_ADAPTER" ? settings.aiApiKey : aiProviderDefaults.CODEX_ADAPTER.apiKey,
-    },
-    ANTHROPIC: {
-      baseUrl: settings.aiProvider === "ANTHROPIC" ? settings.aiBaseUrl : aiProviderDefaults.ANTHROPIC.baseUrl,
-      model: settings.aiProvider === "ANTHROPIC" ? settings.aiModel : aiProviderDefaults.ANTHROPIC.model,
-      apiKey: settings.aiProvider === "ANTHROPIC" ? settings.aiApiKey : aiProviderDefaults.ANTHROPIC.apiKey,
-    },
-  };
-}
-
-function ToolingRow({ label, ok, value }: { label: string; ok: boolean; value: string }) {
-  return (
-    <div className="tooling-status__row">
-      <span className={`tooling-status__mark${ok ? " tooling-status__mark--ok" : ""}`}>{ok ? "✓" : "!"}</span>
-      <strong>{label}</strong>
-      <span>{value || "Not available"}</span>
-    </div>
-  );
+function ToolPathField({ label, placeholder, value, onChange }: { label: string; placeholder: string; value: string; onChange: (value: string) => void }) {
+  return <label className="settings-field"><span>{label}</span><input autoCapitalize="none" autoCorrect="off" placeholder={placeholder} spellCheck={false} value={value} onChange={(event) => onChange(event.target.value)} /><small>Command name or absolute executable path.</small></label>;
 }

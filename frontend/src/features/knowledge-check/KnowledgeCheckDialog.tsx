@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { CheckCircle2, Mic, RefreshCw, Send, Square, X, XCircle } from "lucide-react";
+import { Check, CheckCircle2, Copy, Mic, RefreshCw, Send, Square, X, XCircle } from "lucide-react";
 import { evaluateProblemKnowledge, recordReviewResult } from "../../api";
 import type { KnowledgeEvaluationResult, ProblemSummary, ReviewState } from "../../types";
 import { displayDifficulty } from "../problem-bank/catalog";
@@ -66,7 +66,9 @@ export function KnowledgeCheckDialog({ problem, onClose, onEvaluated, onReviewGr
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isGrading, setIsGrading] = useState(false);
   const [gradeMessage, setGradeMessage] = useState<string | null>(null);
+  const [promptCopied, setPromptCopied] = useState(false);
   const [result, setResult] = useState<KnowledgeEvaluationResult | null>(null);
+  const [knowledgeSessionId, setKnowledgeSessionId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const recognitionRef = useRef<InstanceType<SpeechRecognitionConstructor> | null>(null);
   const committedTranscriptRef = useRef("");
@@ -252,11 +254,26 @@ export function KnowledgeCheckDialog({ problem, onClose, onEvaluated, onReviewGr
     try {
       const response = await evaluateProblemKnowledge(problem.id, transcript.trim());
       setResult(response);
+      setKnowledgeSessionId(response.sessionId ?? null);
       onEvaluated(response);
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : "Unable to evaluate explanation.");
     } finally {
       setIsSubmitting(false);
+    }
+  }
+
+  async function copyClaudePrompt() {
+    const sessionInstruction = knowledgeSessionId
+      ? `Call start_knowledge_check with problemId ${problem.id} and sessionId ${knowledgeSessionId} to load my saved transcript.`
+      : `Call start_knowledge_check for ${problem.slug}.`;
+    const prompt = `Use the JURO MCP server. Call get_current_problem, then ${sessionInstruction} Ask me to explain the algorithm, edge cases, invariants, and complexity. After I answer, call submit_knowledge_check with your structured assessment.`;
+    try {
+      await navigator.clipboard.writeText(prompt);
+      setPromptCopied(true);
+      window.setTimeout(() => setPromptCopied(false), 1800);
+    } catch {
+      setError("Unable to copy the Claude prompt. Use the MCP configuration in Settings and enter the instruction manually.");
     }
   }
 
@@ -293,8 +310,8 @@ export function KnowledgeCheckDialog({ problem, onClose, onEvaluated, onReviewGr
             <span className="section-kicker">Knowledge Check</span>
             <h2>{problem.title}</h2>
             <p>
-              Explain the approach, edge cases, and complexity. The configured local AI evaluator will compare it with the
-              problem rubric.
+              Explain the approach, edge cases, and complexity. JURO saves your transcript for a Claude knowledge check
+              through MCP; it no longer sends the transcript to a provider URL directly.
             </p>
           </div>
           <button aria-label="Close knowledge check" className="icon-button" onClick={onClose} type="button">
@@ -335,8 +352,8 @@ export function KnowledgeCheckDialog({ problem, onClose, onEvaluated, onReviewGr
           {isSubmitting ? (
             <section className="knowledge-evaluation-progress" aria-live="polite">
               <div>
-                <strong>AI evaluator is judging your explanation</strong>
-                <span>JURO is sending the transcript to the configured local model through the backend.</span>
+                <strong>Saving transcript for Claude via MCP</strong>
+                <span>JURO is persisting this attempt for Claude through MCP.</span>
               </div>
               <div className="knowledge-evaluation-progress__bar" aria-hidden="true">
                 <span />
@@ -355,7 +372,13 @@ export function KnowledgeCheckDialog({ problem, onClose, onEvaluated, onReviewGr
               <ResultList title="Strengths" items={result.strengths} />
               <ResultList title="Missing concepts" items={result.missingConcepts} />
               {result.suggestedReview ? <p className="knowledge-result__review">{result.suggestedReview}</p> : null}
-              {result.status !== "ERROR" ? (
+              {result.status === "PENDING" ? (
+                <button className="button button--ghost button--sm" onClick={() => void copyClaudePrompt()} type="button">
+                  {promptCopied ? <Check size={14} /> : <Copy size={14} />}
+                  {promptCopied ? "Prompt copied" : "Copy Claude MCP prompt"}
+                </button>
+              ) : null}
+              {result.status !== "ERROR" && result.status !== "PENDING" ? (
                 <section className="review-grade-panel" aria-label="Grade explanation review">
                   <div>
                     <strong>Your grade controls the reminder</strong>
@@ -400,7 +423,7 @@ export function KnowledgeCheckDialog({ problem, onClose, onEvaluated, onReviewGr
           </button>
           <button className="button button--primary button--sm" disabled={isSubmitting} onClick={submitEvaluation} type="button">
             {isSubmitting ? <RefreshCw size={14} /> : <Send size={14} />}
-            Evaluate
+            Save for Claude
           </button>
         </footer>
       </section>

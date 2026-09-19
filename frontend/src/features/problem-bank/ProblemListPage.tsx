@@ -1,35 +1,46 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { RefObject } from 'react';
-import { CircleHelp, ExternalLink, FolderCode, Mic, MoreVertical, Pencil, Play, Plus, RefreshCw, Search, Settings, Trash2, X } from 'lucide-react';
+import { CircleHelp, Search, Settings, X } from 'lucide-react';
 import { ThemeToggleButton } from '../../app/theme';
+import { ErrorMessage } from '../../components/ErrorMessage';
 import {
   clearActiveLocalWorkspace,
   createProblemScaffold,
-  deleteProblem as deleteProblemApi,
+  finishPracticeSession,
+  getActivitySummary,
   getActiveLocalWorkspace,
-  getProblemBankFileSyncStatus,
+  getTodayQueue,
+  heartbeatPracticeSession,
+  launchClaudeKnowledgeCheck,
   listProblems,
   openProblemInEditor,
   recordReviewResult,
   runLocalProblemTests,
+  startPracticeSession,
+  focusProblem,
 } from '../../api';
 import type {
+  ActivitySummary,
   KnowledgeEvaluationResult,
   LocalProblemRunResult,
   LocalProblemWorkspace,
   LocalWorkspaceSettings,
-  ProblemBankFileSyncStatus,
   ProblemDifficulty,
   ReviewState,
   ProblemSummary,
   ProblemType,
+  PracticeSession,
+  TodayQueue as TodayQueueData,
 } from '../../types';
-import { EditProblemDrawer } from '../problem-authoring/EditProblemDrawer';
 import { AboutHelpDialog } from '../help/AboutHelpDialog';
 import { KnowledgeCheckDialog } from '../knowledge-check/KnowledgeCheckDialog';
 import { LocalWorkspacePanel } from '../local-workspace/LocalWorkspacePanel';
 import { LocalWorkspaceSettingsDialog } from '../local-workspace/LocalWorkspaceSettingsDialog';
+import { OnboardingDialog } from '../onboarding/OnboardingDialog';
+import { ActivityHeatmap } from './ActivityHeatmap';
+import { ProblemActionModal } from './ProblemActionModal';
+import { TodayQueue } from './TodayQueue';
 import {
   averageTimeForProblem,
   compareCatalogProblems,
@@ -42,6 +53,7 @@ import {
   formatCatalogDate,
   paginationItems,
   reviewLabel,
+  reviewDueLabel,
   reviewTone,
   sortPresetForConfig,
   statusForProblem,
@@ -119,341 +131,31 @@ function useResponsivePageSize(tableBodyRef: RefObject<HTMLDivElement | null>) {
   return pageSize;
 }
 
-function catalogFileSyncLabel(status: ProblemBankFileSyncStatus) {
-  if (status.importInProgress) {
-    return "JSON syncing";
-  }
-  if (status.lastError) {
-    return "JSON sync error";
-  }
-  if (status.synced) {
-    return "JSON synced";
-  }
-  return "JSON watching";
-}
-
 type ReviewFilter = "ALL" | "DUE" | "CODE_DUE" | "EXPLANATION_DUE" | "NEW" | "MASTERED";
-type ActionMenuPosition = { left: number; top: number; width: number };
-
-const actionMenuWidth = 176;
-const actionMenuViewportGap = 8;
-const actionMenuTriggerGap = 6;
-
-type MockProblemStatus = "solved" | "attempted" | "not_started";
-type MockReviewKind = "due" | "new" | "up_to_date";
-
-function mockReviewState(
-  track: ReviewState["track"],
-  kind: MockReviewKind,
-  priorityScore: number,
-  lastResult?: ReviewState["lastResult"],
-): ReviewState {
-  const status: ReviewState["status"] = kind === "due" ? "DUE" : kind === "new" ? "NEW" : "REVIEW";
-  return {
-    track,
-    status,
-    dueAt: kind === "due" ? "2026-05-01T10:00:00.000Z" : kind === "new" ? "2026-05-25T10:00:00.000Z" : "2026-07-01T10:00:00.000Z",
-    lastReviewedAt: kind === "new" ? null : "2026-04-20T10:00:00.000Z",
-    intervalDays: kind === "due" ? 1 : kind === "new" ? 0 : 21,
-    easeFactor: 2.5,
-    repetitions: lastResult ? 2 : 0,
-    lapses: lastResult === "FAILED" ? 1 : 0,
-    lastResult,
-    priorityScore,
-  };
-}
-
-function mockCodingResult(status: MockProblemStatus): ReviewState["lastResult"] {
-  if (status === "solved") {
-    return "PASSED";
-  }
-  if (status === "attempted") {
-    return "FAILED";
-  }
-  return null;
-}
-
-function mockProblem(
-  index: number,
-  values: {
-    title: string;
-    summary: string;
-    type: ProblemType;
-    difficulty: ProblemDifficulty;
-    status: MockProblemStatus;
-    codingReview: MockReviewKind;
-    explanationReview: MockReviewKind;
-    avgTimeMinutes: number;
-    updatedAt: string;
-  },
-): ProblemSummary {
-  const codingResult = mockCodingResult(values.status);
-  const slug = values.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-  return {
-    id: `mock-problem-${index + 1}`,
-    slug,
-    title: values.title,
-    summary: values.summary,
-    type: values.type,
-    difficulty: values.difficulty,
-    avgTimeMinutes: values.avgTimeMinutes,
-    exampleCount: 3,
-    testCaseCount: values.difficulty === "HARD" ? 8 : values.difficulty === "MEDIUM" ? 6 : 4,
-    solutionVideoUrl: null,
-    codingReview: mockReviewState("CODING", values.codingReview, values.codingReview === "due" ? 92 - index : 42 - index, codingResult),
-    explanationReview: mockReviewState(
-      "EXPLANATION",
-      values.explanationReview,
-      values.explanationReview === "due" ? 86 - index : 34 - index,
-      values.explanationReview === "new" ? null : "PASSED",
-    ),
-    createdAt: "2026-01-10T10:00:00.000Z",
-    updatedAt: `${values.updatedAt}T10:00:00.000Z`,
-  };
-}
-
-const mockProblems: ProblemSummary[] = [
-  mockProblem(0, {
-    title: "Binary Search",
-    summary: "Find a target in a sorted array using logarithmic search.",
-    type: "PYTHON",
-    difficulty: "EASY",
-    status: "solved",
-    codingReview: "up_to_date",
-    explanationReview: "new",
-    avgTimeMinutes: 8,
-    updatedAt: "2026-05-08",
-  }),
-  mockProblem(1, {
-    title: "Merge Intervals",
-    summary: "Merge overlapping intervals after sorting by start time.",
-    type: "JAVA",
-    difficulty: "MEDIUM",
-    status: "attempted",
-    codingReview: "due",
-    explanationReview: "up_to_date",
-    avgTimeMinutes: 22,
-    updatedAt: "2026-05-04",
-  }),
-  mockProblem(2, {
-    title: "Valid Parentheses",
-    summary: "Use a stack to validate balanced bracket pairs.",
-    type: "JAVASCRIPT",
-    difficulty: "EASY",
-    status: "not_started",
-    codingReview: "new",
-    explanationReview: "new",
-    avgTimeMinutes: 10,
-    updatedAt: "2026-04-29",
-  }),
-  mockProblem(3, {
-    title: "LRU Cache",
-    summary: "Design a cache with O(1) get and put operations.",
-    type: "CPP",
-    difficulty: "HARD",
-    status: "attempted",
-    codingReview: "due",
-    explanationReview: "due",
-    avgTimeMinutes: 45,
-    updatedAt: "2026-04-22",
-  }),
-  mockProblem(4, {
-    title: "Top K Frequent Elements",
-    summary: "Return the most frequent elements using buckets or a heap.",
-    type: "PYTHON",
-    difficulty: "MEDIUM",
-    status: "solved",
-    codingReview: "up_to_date",
-    explanationReview: "up_to_date",
-    avgTimeMinutes: 28,
-    updatedAt: "2026-04-18",
-  }),
-  mockProblem(5, {
-    title: "Word Ladder",
-    summary: "Find the shortest transformation sequence with BFS.",
-    type: "JAVA",
-    difficulty: "HARD",
-    status: "not_started",
-    codingReview: "new",
-    explanationReview: "due",
-    avgTimeMinutes: 50,
-    updatedAt: "2026-04-12",
-  }),
-  mockProblem(6, {
-    title: "Kth Largest Element",
-    summary: "Select the kth largest value with heap or quickselect.",
-    type: "JAVASCRIPT",
-    difficulty: "MEDIUM",
-    status: "attempted",
-    codingReview: "up_to_date",
-    explanationReview: "new",
-    avgTimeMinutes: 24,
-    updatedAt: "2026-04-08",
-  }),
-  mockProblem(7, {
-    title: "Longest Substring Without Repeating Characters",
-    summary: "Track a sliding window over unique characters.",
-    type: "CPP",
-    difficulty: "MEDIUM",
-    status: "solved",
-    codingReview: "due",
-    explanationReview: "up_to_date",
-    avgTimeMinutes: 19,
-    updatedAt: "2026-04-02",
-  }),
-  mockProblem(8, {
-    title: "Course Schedule",
-    summary: "Detect cycles in prerequisite dependencies.",
-    type: "PYTHON",
-    difficulty: "MEDIUM",
-    status: "attempted",
-    codingReview: "due",
-    explanationReview: "new",
-    avgTimeMinutes: 31,
-    updatedAt: "2026-03-27",
-  }),
-  mockProblem(9, {
-    title: "Serialize and Deserialize Binary Tree",
-    summary: "Encode and rebuild a binary tree from traversal data.",
-    type: "JAVA",
-    difficulty: "HARD",
-    status: "not_started",
-    codingReview: "new",
-    explanationReview: "new",
-    avgTimeMinutes: 54,
-    updatedAt: "2026-03-20",
-  }),
-  mockProblem(10, {
-    title: "Minimum Window Substring",
-    summary: "Find the smallest window containing all required characters.",
-    type: "JAVASCRIPT",
-    difficulty: "HARD",
-    status: "attempted",
-    codingReview: "due",
-    explanationReview: "due",
-    avgTimeMinutes: 47,
-    updatedAt: "2026-03-14",
-  }),
-  mockProblem(11, {
-    title: "Clone Graph",
-    summary: "Deep copy an undirected graph with DFS or BFS.",
-    type: "CPP",
-    difficulty: "MEDIUM",
-    status: "solved",
-    codingReview: "up_to_date",
-    explanationReview: "up_to_date",
-    avgTimeMinutes: 26,
-    updatedAt: "2026-03-08",
-  }),
-  mockProblem(12, {
-    title: "Number of Islands",
-    summary: "Count connected land components in a grid.",
-    type: "PYTHON",
-    difficulty: "MEDIUM",
-    status: "attempted",
-    codingReview: "up_to_date",
-    explanationReview: "due",
-    avgTimeMinutes: 23,
-    updatedAt: "2026-03-01",
-  }),
-  mockProblem(13, {
-    title: "House Robber",
-    summary: "Use dynamic programming to maximize non-adjacent gains.",
-    type: "JAVA",
-    difficulty: "EASY",
-    status: "solved",
-    codingReview: "up_to_date",
-    explanationReview: "new",
-    avgTimeMinutes: 12,
-    updatedAt: "2026-02-25",
-  }),
-  mockProblem(14, {
-    title: "Coin Change",
-    summary: "Compute the fewest coins needed for a target amount.",
-    type: "JAVASCRIPT",
-    difficulty: "MEDIUM",
-    status: "not_started",
-    codingReview: "new",
-    explanationReview: "new",
-    avgTimeMinutes: 34,
-    updatedAt: "2026-02-20",
-  }),
-  mockProblem(15, {
-    title: "Implement Trie",
-    summary: "Build prefix-tree insert, search, and startsWith APIs.",
-    type: "CPP",
-    difficulty: "MEDIUM",
-    status: "attempted",
-    codingReview: "due",
-    explanationReview: "up_to_date",
-    avgTimeMinutes: 29,
-    updatedAt: "2026-02-14",
-  }),
-  mockProblem(16, {
-    title: "Rotting Oranges",
-    summary: "Run multi-source BFS to simulate minute-by-minute spread.",
-    type: "PYTHON",
-    difficulty: "MEDIUM",
-    status: "solved",
-    codingReview: "up_to_date",
-    explanationReview: "up_to_date",
-    avgTimeMinutes: 21,
-    updatedAt: "2026-02-08",
-  }),
-  mockProblem(17, {
-    title: "Meeting Rooms II",
-    summary: "Find the minimum rooms required for overlapping meetings.",
-    type: "JAVA",
-    difficulty: "MEDIUM",
-    status: "attempted",
-    codingReview: "due",
-    explanationReview: "new",
-    avgTimeMinutes: 25,
-    updatedAt: "2026-01-31",
-  }),
-  mockProblem(18, {
-    title: "Median of Two Sorted Arrays",
-    summary: "Binary search partitions across two sorted arrays.",
-    type: "CPP",
-    difficulty: "HARD",
-    status: "not_started",
-    codingReview: "new",
-    explanationReview: "due",
-    avgTimeMinutes: 55,
-    updatedAt: "2026-01-23",
-  }),
-  mockProblem(19, {
-    title: "Sliding Window Maximum",
-    summary: "Maintain a monotonic deque for each window maximum.",
-    type: "JAVASCRIPT",
-    difficulty: "HARD",
-    status: "solved",
-    codingReview: "up_to_date",
-    explanationReview: "up_to_date",
-    avgTimeMinutes: 42,
-    updatedAt: "2026-01-15",
-  }),
-];
-
 export function ProblemListPage() {
   const tableBodyRef = useRef<HTMLDivElement>(null);
   const pageSize = useResponsivePageSize(tableBodyRef);
   const [pageIndex, setPageIndex] = useState(0);
   const [problems, setProblems] = useState<ProblemSummary[]>([]);
+  const [activity, setActivity] = useState<ActivitySummary | null>(null);
+  const [isActivityLoading, setIsActivityLoading] = useState(true);
+  const [todayQueue, setTodayQueue] = useState<TodayQueueData | null>(null);
+  const [isTodayQueueLoading, setIsTodayQueueLoading] = useState(true);
   const [refreshToken, setRefreshToken] = useState(0);
-  const [editProblemMode, setEditProblemMode] = useState<"edit" | "new" | null>(null);
   const [selectedProblem, setSelectedProblem] = useState<CatalogProblem | null>(null);
-  const [openActionMenuId, setOpenActionMenuId] = useState<string | null>(null);
-  const [actionMenuPosition, setActionMenuPosition] = useState<ActionMenuPosition | null>(null);
-  const [deleteCandidate, setDeleteCandidate] = useState<CatalogProblem | null>(null);
   const [showCatalogControlsDialog, setShowCatalogControlsDialog] = useState(false);
   const [showHelpDialog, setShowHelpDialog] = useState(false);
   const [showSettingsDialog, setShowSettingsDialog] = useState(false);
+  const [showOnboarding, setShowOnboarding] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.localStorage.getItem("juro.onboarding.dismissed") !== "1";
+  });
   const [activeWorkspace, setActiveWorkspace] = useState<LocalProblemWorkspace | null>(null);
+  const [practiceSession, setPracticeSession] = useState<PracticeSession | null>(null);
   const [lastRunResult, setLastRunResult] = useState<LocalProblemRunResult | null>(null);
+  const [lastCodingReview, setLastCodingReview] = useState<ReviewState | null>(null);
   const [lastKnowledgeResult, setLastKnowledgeResult] = useState<KnowledgeEvaluationResult | null>(null);
   const [knowledgeProblem, setKnowledgeProblem] = useState<ProblemSummary | null>(null);
-  const [fileSyncStatus, setFileSyncStatus] = useState<ProblemBankFileSyncStatus | null>(null);
   const [localActionError, setLocalActionError] = useState<string | null>(null);
   const [busyLocalAction, setBusyLocalAction] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -475,7 +177,7 @@ export function ProblemListPage() {
       try {
         const response = await listProblems();
         if (active) {
-          setProblems([...response, ...mockProblems]);
+          setProblems(response);
           setError(null);
         }
       } catch (loadError) {
@@ -498,41 +200,43 @@ export function ProblemListPage() {
 
   useEffect(() => {
     let active = true;
-    let lastSeenImportedAt: string | null = null;
+    setIsActivityLoading(true);
 
-    async function refreshFileSyncStatus() {
-      try {
-        const status = await getProblemBankFileSyncStatus();
-        if (!active) {
-          return;
-        }
-        setFileSyncStatus(status);
-        if (!status.enabled || !status.lastImportedAt) {
-          return;
-        }
-        if (lastSeenImportedAt === null) {
-          lastSeenImportedAt = status.lastImportedAt;
-          setRefreshToken((current) => current + 1);
-          return;
-        }
-        if (status.lastImportedAt !== lastSeenImportedAt) {
-          lastSeenImportedAt = status.lastImportedAt;
-          setRefreshToken((current) => current + 1);
-        }
-      } catch {
-        if (active) {
-          setFileSyncStatus(null);
-        }
-      }
-    }
+    getActivitySummary(365)
+      .then((response) => {
+        if (active) setActivity(response);
+      })
+      .catch(() => {
+        if (active) setActivity(null);
+      })
+      .finally(() => {
+        if (active) setIsActivityLoading(false);
+      });
 
-    void refreshFileSyncStatus();
-    const interval = window.setInterval(refreshFileSyncStatus, 2500);
     return () => {
       active = false;
-      window.clearInterval(interval);
     };
-  }, []);
+  }, [refreshToken]);
+
+  useEffect(() => {
+    let active = true;
+    setIsTodayQueueLoading(true);
+
+    getTodayQueue(8)
+      .then((response) => {
+        if (active) setTodayQueue(response);
+      })
+      .catch(() => {
+        if (active) setTodayQueue(null);
+      })
+      .finally(() => {
+        if (active) setIsTodayQueueLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [refreshToken]);
 
   useEffect(() => {
     let active = true;
@@ -563,12 +267,40 @@ export function ProblemListPage() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!practiceSession || practiceSession.status !== "ACTIVE") {
+      return;
+    }
+
+    let active = true;
+    const sessionId = practiceSession.id;
+    async function heartbeat() {
+      if (document.visibilityState !== "visible") {
+        return;
+      }
+      try {
+        const next = await heartbeatPracticeSession(sessionId);
+        if (active) setPracticeSession(next);
+      } catch {
+        // A lost heartbeat should not interrupt the practice session UI.
+      }
+    }
+
+    const interval = window.setInterval(() => void heartbeat(), 30_000);
+    document.addEventListener("visibilitychange", heartbeat);
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", heartbeat);
+    };
+  }, [practiceSession]);
+
   const catalogProblems: CatalogProblem[] = problems.map((problem) => ({
     ...problem,
     avgTimeMinutes: averageTimeForProblem(problem),
     displayTitle: displayProblemTitle(problem.title),
     status: statusForProblem(problem),
-    track: trackForProblem(problem),
+    track: trackForProblem(),
   }));
 
   const normalizedSearch = searchQuery.trim().toLowerCase();
@@ -609,9 +341,6 @@ export function ProblemListPage() {
   const totalPages = Math.max(1, Math.ceil(filteredProblems.length / pageSize));
   const safePageIndex = Math.min(pageIndex, totalPages - 1);
   const pagedProblems = sortedProblems.slice(safePageIndex * pageSize, safePageIndex * pageSize + pageSize);
-  const activeActionMenuProblem = openActionMenuId
-    ? pagedProblems.find((problem) => problem.id === openActionMenuId) ?? null
-    : null;
   const hasActiveFilters =
     trackFilter !== "ALL" ||
     difficultyFilter !== "ALL" ||
@@ -628,58 +357,6 @@ export function ProblemListPage() {
     { key: "avgTime", label: "Avg Time", align: "right" },
     { key: "updated", label: "Updated", align: "right" },
   ];
-
-  useEffect(() => {
-    if (!openActionMenuId) {
-      return;
-    }
-
-    function closeMenu() {
-      closeActionMenu();
-    }
-
-    function handlePointerDown(event: MouseEvent) {
-      const target = event.target;
-      if (target instanceof Element && target.closest("[data-action-menu-root]")) {
-        return;
-      }
-
-      closeActionMenu();
-    }
-
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        closeActionMenu();
-      }
-    }
-
-    document.addEventListener("mousedown", handlePointerDown);
-    document.addEventListener("keydown", handleKeyDown);
-    window.addEventListener("resize", closeMenu);
-    window.addEventListener("scroll", closeMenu, true);
-
-    return () => {
-      document.removeEventListener("mousedown", handlePointerDown);
-      document.removeEventListener("keydown", handleKeyDown);
-      window.removeEventListener("resize", closeMenu);
-      window.removeEventListener("scroll", closeMenu, true);
-    };
-  }, [openActionMenuId]);
-
-  useEffect(() => {
-    if (!deleteCandidate) {
-      return;
-    }
-
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        setDeleteCandidate(null);
-      }
-    }
-
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [deleteCandidate]);
 
   useEffect(() => {
     if (!showCatalogControlsDialog) {
@@ -743,132 +420,65 @@ export function ProblemListPage() {
     setReviewFilter("ALL");
   }
 
-  function openNewProblemModal() {
-    setSelectedProblem(null);
-    setEditProblemMode("new");
-  }
-
-  function closeActionMenu() {
-    setOpenActionMenuId(null);
-    setActionMenuPosition(null);
-  }
-
-  function getActionMenuPosition(trigger: HTMLButtonElement): ActionMenuPosition {
-    const rect = trigger.getBoundingClientRect();
-    const estimatedMenuHeight = window.innerWidth < 768 ? 322 : 250;
-    const maxLeft = Math.max(actionMenuViewportGap, window.innerWidth - actionMenuWidth - actionMenuViewportGap);
-    const left = Math.min(Math.max(actionMenuViewportGap, rect.right - actionMenuWidth), maxLeft);
-    const spaceBelow = window.innerHeight - rect.bottom - actionMenuViewportGap;
-    const spaceAbove = rect.top - actionMenuViewportGap;
-    const shouldOpenBelow = spaceBelow >= estimatedMenuHeight || spaceBelow >= spaceAbove;
-    const preferredTop = shouldOpenBelow
-      ? rect.bottom + actionMenuTriggerGap
-      : rect.top - estimatedMenuHeight - actionMenuTriggerGap;
-    const maxTop = Math.max(actionMenuViewportGap, window.innerHeight - estimatedMenuHeight - actionMenuViewportGap);
-    const top = Math.min(Math.max(actionMenuViewportGap, preferredTop), maxTop);
-
-    return { left, top, width: actionMenuWidth };
-  }
-
-  function toggleActionMenu(problemId: string, trigger: HTMLButtonElement) {
-    if (openActionMenuId === problemId) {
-      closeActionMenu();
-      return;
-    }
-
-    setOpenActionMenuId(problemId);
-    setActionMenuPosition(getActionMenuPosition(trigger));
-  }
-
-  function openEditProblemModal(problem: CatalogProblem) {
-    setSelectedProblem(problem);
-    setEditProblemMode("edit");
-    closeActionMenu();
-  }
-
   function openSolutionVideo(problem: CatalogProblem) {
     if (problem.solutionVideoUrl) {
       window.open(problem.solutionVideoUrl, "_blank", "noopener,noreferrer");
     }
-    closeActionMenu();
   }
 
-  function openKnowledgeCheck(problem: ProblemSummary) {
-    setKnowledgeProblem(problem);
-    closeActionMenu();
+  async function selectProblem(problem: CatalogProblem) {
+    if (busyLocalAction) return;
+    setBusyLocalAction(true);
+    setLocalActionError(null);
+    try {
+      await focusProblem(problem.id);
+      setSelectedProblem(problem);
+      setLastCodingReview(null);
+      setRefreshToken((current) => current + 1);
+    } catch (focusError) {
+      setLocalActionError(focusError instanceof Error ? focusError.message : "Unable to set the current problem.");
+    } finally {
+      setBusyLocalAction(false);
+    }
   }
 
-  function isMockProblemId(problemId: string) {
-    return problemId.startsWith("mock-problem-");
+  function startTodayProblem(problemId: string) {
+    const problem = catalogProblems.find((item) => item.id === problemId);
+    if (problem) {
+      void selectProblem(problem);
+    }
   }
 
-  function mockWorkspaceForProblem(problem: CatalogProblem): LocalProblemWorkspace {
-    return {
-      problemId: problem.id,
-      title: problem.displayTitle,
-      slug: problem.slug,
-      scaffoldPath: `/Users/villegas/juro-workspace/${problem.slug}`,
-      editor: "VS_CODE",
-      opened: true,
-      status: "OPEN",
-      processId: null,
-      closeDetectionAvailable: true,
-      launchedAt: new Date().toISOString(),
-      message: "",
-    };
+  async function ensureCodingSession(problemId: string) {
+    if (practiceSession?.status === "ACTIVE" && practiceSession.problemId === problemId) {
+      return practiceSession;
+    }
+    const session = await startPracticeSession(problemId, "CODING");
+    setPracticeSession(session);
+    return session;
   }
 
-  function mockRunResultForProblem(problem: CatalogProblem): LocalProblemRunResult {
-    const passed = problem.status === "SOLVED";
-    return {
-      problemId: problem.id,
-      title: problem.displayTitle,
-      slug: problem.slug,
-      scaffoldPath: `/Users/villegas/juro-workspace/${problem.slug}`,
-      status: passed ? "PASSED" : "FAILED",
-      exitCode: passed ? 0 : 1,
-      runtimeMillis: (problem.avgTimeMinutes ?? 20) * 35,
-      stdout: passed ? "All sample cases passed." : "Sample case failed.",
-      stderr: "",
-      caseResults: [
-        {
-          label: "Sample 1",
-          passed,
-          inputData: "[1,2,3]",
-          expectedOutput: "true",
-          actualOutput: passed ? "true" : "false",
-          note: passed ? "Matches expected output." : "Mock failure for UI testing.",
-          runtimeMillis: 12,
-        },
-        {
-          label: "Sample 2",
-          passed: true,
-          inputData: "[4,5,6]",
-          expectedOutput: "true",
-          actualOutput: "true",
-          note: "Matches expected output.",
-          runtimeMillis: 15,
-        },
-      ],
-    };
-  }
-
-  function closeEditProblemModal() {
-    setEditProblemMode(null);
-    setSelectedProblem(null);
-  }
-
-  async function confirmDeleteProblem() {
-    if (!deleteCandidate) {
+  async function openKnowledgeCheck(problem: ProblemSummary) {
+    if (busyLocalAction) {
       return;
     }
 
+    setBusyLocalAction(true);
+    setLocalActionError(null);
+
     try {
-      await deleteProblemApi(deleteCandidate.id);
-      setProblems((current) => current.filter((problem) => problem.id !== deleteCandidate.id));
-      setDeleteCandidate(null);
-    } catch (deleteError) {
-      setLocalActionError(deleteError instanceof Error ? deleteError.message : "Unable to delete problem.");
+      const launch = await launchClaudeKnowledgeCheck(problem.id);
+      setRefreshToken((current) => current + 1);
+      if (launch.launched && launch.copied) {
+        return;
+      }
+      setLocalActionError(launch.message);
+      setKnowledgeProblem(problem);
+    } catch (launchError) {
+      setLocalActionError(launchError instanceof Error ? launchError.message : "Claude could not be opened. Use the manual knowledge check.");
+      setKnowledgeProblem(problem);
+    } finally {
+      setBusyLocalAction(false);
     }
   }
 
@@ -881,19 +491,15 @@ export function ProblemListPage() {
     setLocalActionError(null);
 
     try {
-      if (isMockProblemId(problem.id)) {
-        setActiveWorkspace(mockWorkspaceForProblem(problem));
-        setLastRunResult(null);
-        setLastKnowledgeResult(null);
-        closeActionMenu();
-        return;
-      }
-
       const workspace = await openProblemInEditor(problem.id);
       setActiveWorkspace(workspace);
       setLastRunResult(null);
+      setLastCodingReview(null);
       setLastKnowledgeResult(null);
-      closeActionMenu();
+      if (workspace.status !== "ERROR") {
+        await ensureCodingSession(problem.id);
+      }
+      setRefreshToken((current) => current + 1);
     } catch (workspaceError) {
       setLocalActionError(
         workspaceError instanceof Error ? workspaceError.message : "Unable to open the local problem workspace.",
@@ -913,18 +519,12 @@ export function ProblemListPage() {
     setLocalActionError(null);
 
     try {
-      if (isMockProblemId(problemId)) {
-        const problem = catalogProblems.find((item) => item.id === problemId);
-        if (problem) {
-          setActiveWorkspace(mockWorkspaceForProblem(problem));
-        }
-        setLastKnowledgeResult(null);
-        return;
-      }
-
       const workspace = await openProblemInEditor(problemId);
       setActiveWorkspace(workspace);
       setLastKnowledgeResult(null);
+      if (workspace.status !== "ERROR") {
+        await ensureCodingSession(problemId);
+      }
     } catch (workspaceError) {
       setLocalActionError(
         workspaceError instanceof Error ? workspaceError.message : "Unable to open the local problem workspace.",
@@ -943,17 +543,11 @@ export function ProblemListPage() {
     setLocalActionError(null);
 
     try {
-      if (isMockProblemId(problem.id)) {
-        setActiveWorkspace(mockWorkspaceForProblem(problem));
-        setLastRunResult(null);
-        closeActionMenu();
-        return;
-      }
-
       const workspace = await createProblemScaffold(problem.id);
       setActiveWorkspace(workspace);
       setLastRunResult(null);
-      closeActionMenu();
+      setLastCodingReview(null);
+      setRefreshToken((current) => current + 1);
     } catch (workspaceError) {
       setLocalActionError(
         workspaceError instanceof Error ? workspaceError.message : "Unable to regenerate the local problem scaffold.",
@@ -972,17 +566,10 @@ export function ProblemListPage() {
     setLocalActionError(null);
 
     try {
-      if (isMockProblemId(problemId)) {
-        const problem = catalogProblems.find((item) => item.id === problemId);
-        if (problem) {
-          setLastRunResult(mockRunResultForProblem(problem));
-          setActiveWorkspace((current) => current ?? mockWorkspaceForProblem(problem));
-        }
-        return;
-      }
-
-      const result = await runLocalProblemTests(problemId);
+      setLastCodingReview(null);
+      const result = await runLocalProblemTests(problemId, practiceSession?.problemId === problemId ? practiceSession.id : null);
       setLastRunResult(result);
+      setRefreshToken((current) => current + 1);
       setActiveWorkspace((current) =>
         current?.problemId === result.problemId
           ? current
@@ -1000,7 +587,6 @@ export function ProblemListPage() {
               message: "Scaffold tested.",
             },
       );
-      closeActionMenu();
     } catch (runError) {
       setLocalActionError(runError instanceof Error ? runError.message : "Unable to run local problem tests.");
     } finally {
@@ -1027,8 +613,19 @@ export function ProblemListPage() {
       throw new Error("Open or run a problem before grading the coding review.");
     }
 
-    const review = await recordReviewResult(problemId, "CODING", passed);
+    const sessionId = practiceSession?.problemId === problemId && practiceSession.status === "ACTIVE" ? practiceSession.id : null;
+    const review = await recordReviewResult(problemId, "CODING", passed, sessionId);
     applyReviewState(problemId, review);
+    setLastCodingReview(review);
+    if (sessionId) {
+      try {
+        const finishedSession = await finishPracticeSession(sessionId);
+        setPracticeSession(finishedSession);
+      } catch {
+        // Scheduling the review remains successful even if session finalization is retried later.
+      }
+    }
+    setRefreshToken((current) => current + 1);
     return review;
   }
 
@@ -1037,9 +634,18 @@ export function ProblemListPage() {
     setLocalActionError(null);
 
     try {
+      if (practiceSession?.status === "ACTIVE") {
+        try {
+          const finishedSession = await finishPracticeSession(practiceSession.id);
+          setPracticeSession(finishedSession);
+        } catch {
+          // The workspace can still be cleared if session finalization is unavailable.
+        }
+      }
       await clearActiveLocalWorkspace();
       setActiveWorkspace(null);
       setLastRunResult(null);
+      setLastCodingReview(null);
       setLastKnowledgeResult(null);
     } catch (clearError) {
       setLocalActionError(clearError instanceof Error ? clearError.message : "Unable to clear the active problem.");
@@ -1052,110 +658,10 @@ export function ProblemListPage() {
     setLocalActionError(null);
   }
 
-  const floatingActionMenu =
-    activeActionMenuProblem && actionMenuPosition && typeof document !== "undefined"
-      ? createPortal(
-          <div
-            className="action-menu action-menu--floating"
-            data-action-menu-root
-            role="menu"
-            style={{
-              left: actionMenuPosition.left,
-              top: actionMenuPosition.top,
-              width: actionMenuPosition.width,
-            }}
-          >
-            <button
-              className="action-menu__item"
-              onClick={(event) => {
-                event.stopPropagation();
-                void openProblemWorkspace(activeActionMenuProblem);
-              }}
-              role="menuitem"
-              type="button"
-            >
-              <FolderCode size={14} />
-              Open in Editor
-            </button>
-            <button
-              className="action-menu__item"
-              onClick={(event) => {
-                event.stopPropagation();
-                void regenerateProblemScaffold(activeActionMenuProblem);
-              }}
-              role="menuitem"
-              type="button"
-            >
-              <RefreshCw size={14} />
-              Regenerate
-            </button>
-            <button
-              className="action-menu__item"
-              onClick={(event) => {
-                event.stopPropagation();
-                void runProblemTests(activeActionMenuProblem.id);
-              }}
-              role="menuitem"
-              type="button"
-            >
-              <Play size={14} />
-              Run Tests
-            </button>
-            <button
-              className="action-menu__item"
-              onClick={(event) => {
-                event.stopPropagation();
-                openKnowledgeCheck(activeActionMenuProblem);
-              }}
-              role="menuitem"
-              type="button"
-            >
-              <Mic size={14} />
-              Knowledge Check
-            </button>
-            {activeActionMenuProblem.solutionVideoUrl ? (
-              <button
-                className="action-menu__item"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  openSolutionVideo(activeActionMenuProblem);
-                }}
-                role="menuitem"
-                type="button"
-              >
-                <ExternalLink size={14} />
-                Solution
-              </button>
-            ) : null}
-            <button
-              className="action-menu__item"
-              onClick={(event) => {
-                event.stopPropagation();
-                openEditProblemModal(activeActionMenuProblem);
-              }}
-              role="menuitem"
-              type="button"
-            >
-              <Pencil size={14} />
-              Edit
-            </button>
-            <button
-              className="action-menu__item action-menu__item--danger"
-              onClick={(event) => {
-                event.stopPropagation();
-                setDeleteCandidate(activeActionMenuProblem);
-                closeActionMenu();
-              }}
-              role="menuitem"
-              type="button"
-            >
-              <Trash2 size={14} />
-              Delete
-            </button>
-          </div>,
-          document.body,
-        )
-      : null;
+  function dismissOnboarding() {
+    window.localStorage.setItem("juro.onboarding.dismissed", "1");
+    setShowOnboarding(false);
+  }
 
   const shownProblemCount = filteredProblems.length;
   const shownProblemCountLabel = `${shownProblemCount} ${shownProblemCount === 1 ? "problem" : "problems"}`;
@@ -1245,7 +751,7 @@ export function ProblemListPage() {
                         <option value="JAVA">JAVA</option>
                         <option value="PYTHON">Python</option>
                         <option value="JAVASCRIPT">JavaScript</option>
-                        <option value="CPP">C++</option>
+                        <option value="GO">Go</option>
                       </select>
                     </span>
                   </label>
@@ -1306,24 +812,9 @@ export function ProblemListPage() {
                 </div>
               </div>
 
-              {fileSyncStatus?.enabled || hasActiveFilters ? (
+              {hasActiveFilters ? (
                 <footer className="catalog-controls-dialog__footer">
-                  {fileSyncStatus?.enabled ? (
-                    <div
-                      className={`catalog-sync-status${
-                        fileSyncStatus.lastError
-                          ? " catalog-sync-status--error"
-                          : fileSyncStatus.synced
-                            ? " catalog-sync-status--ok"
-                            : ""
-                      }`}
-                      title={fileSyncStatus.lastError ?? fileSyncStatus.filePath}
-                    >
-                      {catalogFileSyncLabel(fileSyncStatus)}
-                    </div>
-                  ) : (
-                    <span aria-hidden="true" />
-                  )}
+                  <span aria-hidden="true" />
                   {hasActiveFilters ? (
                     <button className="clear-filters" onClick={clearFilters} type="button">
                       Clear filters
@@ -1341,14 +832,6 @@ export function ProblemListPage() {
     <>
       <aside className="app-sidebar" aria-label="Application navigation">
         <nav className="app-sidebar__section app-sidebar__section--top" aria-label="Primary actions">
-          <button
-            aria-label="New Problem"
-            className="icon-button"
-            onClick={openNewProblemModal}
-            type="button"
-          >
-            <Plus size={17} strokeWidth={2.35} />
-          </button>
           <button
             aria-expanded={showCatalogControlsDialog}
             aria-haspopup="dialog"
@@ -1384,19 +867,28 @@ export function ProblemListPage() {
       <section className="viewport-page viewport-page--catalog">
       <div className="catalog-shell">
         <section className="problem-bank-panel">
-          {localActionError ? <div className="local-action-error error-banner">{localActionError}</div> : null}
+          {localActionError ? <ErrorMessage className="local-action-error error-banner" error={localActionError} /> : null}
+
+          <TodayQueue
+            busy={busyLocalAction}
+            isLoading={isTodayQueueLoading}
+            onStart={startTodayProblem}
+            queue={todayQueue}
+          />
 
           <LocalWorkspacePanel
             activeWorkspace={activeWorkspace}
+            codingReview={lastCodingReview}
             isBusy={busyLocalAction}
             lastKnowledgeResult={lastKnowledgeResult}
             lastRunResult={lastRunResult}
             onClear={() => void clearCurrentWorkspace()}
+            onFinishSession={() => void clearCurrentWorkspace()}
             onGradeCoding={gradeActiveCodingReview}
             onKnowledgeCheck={() => {
               const problem = problems.find((item) => item.id === activeWorkspace?.problemId);
               if (problem) {
-                openKnowledgeCheck(problem);
+                void openKnowledgeCheck(problem);
               }
             }}
             onOpenEditor={() => void reopenActiveWorkspace()}
@@ -1416,14 +908,13 @@ export function ProblemListPage() {
                 >
                   <span>{header.label}</span>
                   <span className="catalog-sort__glyph">{sortGlyph(header.key)}</span>
-                </button>
+                  </button>
               ))}
-              <div className="catalog-actions-head">Actions</div>
             </div>
 
             <div className="catalog-table__body" ref={tableBodyRef}>
               {isLoading ? <div className="empty-state">Loading problems…</div> : null}
-              {error ? <div className="error-banner">{error}</div> : null}
+              {error ? <ErrorMessage className="error-banner" error={error} /> : null}
               {!isLoading && !error && pagedProblems.length === 0 ? (
                 <div className="empty-state">No problems match the current filters.</div>
               ) : null}
@@ -1432,7 +923,7 @@ export function ProblemListPage() {
                 <div
                   className="catalog-row"
                   key={problem.id}
-                  onClick={() => void openProblemWorkspace(problem)}
+                  onClick={() => void selectProblem(problem)}
                   onKeyDown={(event) => {
                     if (event.target !== event.currentTarget) {
                       return;
@@ -1440,7 +931,7 @@ export function ProblemListPage() {
 
                     if (event.key === "Enter" || event.key === " ") {
                       event.preventDefault();
-                      void openProblemWorkspace(problem);
+                      void selectProblem(problem);
                     }
                   }}
                   role="button"
@@ -1455,7 +946,12 @@ export function ProblemListPage() {
                     </span>
                   </div>
 
-                  <div className="catalog-row__cell catalog-row__problem" data-label="Problem">
+                  <div
+                    aria-label={`${problem.displayTitle}: ${problem.summary}`}
+                    className="catalog-row__cell catalog-row__problem"
+                    data-label="Problem"
+                    title={problem.summary}
+                  >
                     <div className="catalog-row__text">
                       <strong>{problem.displayTitle}</strong>
                       <span>{problem.summary}</span>
@@ -1476,10 +972,12 @@ export function ProblemListPage() {
 
                   <div className="catalog-row__cell catalog-row__cell--review" data-label="Review">
                     <span className={`review-pill review-pill--${reviewTone(problem.codingReview)}`}>
-                      Code {reviewLabel(problem.codingReview)}
+                      <span>Code {reviewLabel(problem.codingReview)}</span>
+                      <small>{reviewDueLabel(problem.codingReview)}</small>
                     </span>
                     <span className={`review-pill review-pill--${reviewTone(problem.explanationReview)}`}>
-                      Explain {reviewLabel(problem.explanationReview)}
+                      <span>Explain {reviewLabel(problem.explanationReview)}</span>
+                      <small>{reviewDueLabel(problem.explanationReview)}</small>
                     </span>
                   </div>
 
@@ -1499,21 +997,6 @@ export function ProblemListPage() {
                     {formatCatalogDate(problem.updatedAt)}
                   </div>
 
-                  <div className="catalog-row__cell catalog-row__actions" data-action-menu-root data-label="Actions">
-                    <button
-                      aria-expanded={openActionMenuId === problem.id}
-                      aria-haspopup="menu"
-                      aria-label={`Actions for ${problem.displayTitle}`}
-                      className="action-menu-trigger"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        toggleActionMenu(problem.id, event.currentTarget);
-                      }}
-                      type="button"
-                    >
-                      <MoreVertical size={17} strokeWidth={2.3} />
-                    </button>
-                  </div>
                 </div>
               ))}
             </div>
@@ -1565,61 +1048,53 @@ export function ProblemListPage() {
               →
             </button>
           </div>
+
+          <ActivityHeatmap activity={activity} isLoading={isActivityLoading} />
         </section>
       </div>
 
-      {floatingActionMenu}
       {catalogControlsDialog}
 
-      {deleteCandidate ? (
-        <div
-          className="delete-confirmation-backdrop"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget) {
-              setDeleteCandidate(null);
-            }
-          }}
-        >
-          <section
-            aria-label={`Delete ${deleteCandidate.displayTitle}`}
-            aria-modal="true"
-            className="delete-confirmation"
-            role="alertdialog"
-          >
-            <p className="delete-confirmation__message">
-              Delete {deleteCandidate.displayTitle}? This cannot be undone.
-            </p>
-            <div className="delete-confirmation__actions">
-              <button className="delete-confirmation__cancel" onClick={() => setDeleteCandidate(null)} type="button">
-                Cancel
-              </button>
-              <button className="delete-confirmation__delete" onClick={confirmDeleteProblem} type="button">
-                Delete
-              </button>
-            </div>
-          </section>
-        </div>
-      ) : null}
-
-      {editProblemMode ? (
-        <EditProblemDrawer
-          key={editProblemMode === "edit" ? selectedProblem?.id ?? "edit" : "new"}
-          mode={editProblemMode}
-          onClose={closeEditProblemModal}
-          onSaved={() => setRefreshToken((current) => current + 1)}
+      {selectedProblem ? (
+        <ProblemActionModal
           problem={selectedProblem}
+          busy={busyLocalAction}
+          onClose={() => setSelectedProblem(null)}
+          onOpenEditor={() => {
+            setSelectedProblem(null);
+            void openProblemWorkspace(selectedProblem);
+          }}
+          onRegenerate={() => {
+            setSelectedProblem(null);
+            void regenerateProblemScaffold(selectedProblem);
+          }}
+          onExplain={() => {
+            setSelectedProblem(null);
+            void openKnowledgeCheck(selectedProblem);
+          }}
+          onSolution={() => openSolutionVideo(selectedProblem)}
         />
       ) : null}
 
       {showSettingsDialog ? (
         <LocalWorkspaceSettingsDialog
           onClose={() => setShowSettingsDialog(false)}
-          onProblemBankImported={() => setRefreshToken((current) => current + 1)}
           onSaved={handleSettingsSaved}
+          onRestored={() => {
+            setShowSettingsDialog(false);
+            setActiveWorkspace(null);
+            setPracticeSession(null);
+            setLastRunResult(null);
+            setLastCodingReview(null);
+            setLastKnowledgeResult(null);
+            setRefreshToken((current) => current + 1);
+          }}
         />
       ) : null}
 
       {showHelpDialog ? <AboutHelpDialog onClose={() => setShowHelpDialog(false)} /> : null}
+
+      {showOnboarding ? <OnboardingDialog onClose={dismissOnboarding} /> : null}
 
       {knowledgeProblem ? (
         <KnowledgeCheckDialog

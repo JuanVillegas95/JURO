@@ -1,4 +1,5 @@
-export type ProblemType = "JAVA" | "PYTHON" | "JAVASCRIPT" | "CPP";
+// CPP is retained for legacy records but is not currently executable.
+export type ProblemType = "JAVA" | "PYTHON" | "JAVASCRIPT" | "GO" | "CPP";
 export type ProblemDifficulty = "EASY" | "MEDIUM" | "HARD";
 export type SubmissionStatus = "QUEUED" | "ACCEPTED" | "REJECTED";
 export type ReviewTrack = "CODING" | "EXPLANATION";
@@ -76,23 +77,6 @@ export interface ProblemDetail {
   testCases: ProblemTestCase[];
 }
 
-export interface ProblemRequest {
-  title: string;
-  slug?: string;
-  summary: string;
-  descriptionMarkdown: string;
-  constraintsMarkdown?: string;
-  type: ProblemType;
-  difficulty: ProblemDifficulty;
-  starterCode?: string;
-  referenceSolution?: string;
-  evaluationNotes?: string;
-  solutionVideoUrl?: string | null;
-  knowledgeRubric: string;
-  examples: ProblemExample[];
-  testCases: ProblemTestCase[];
-}
-
 export interface SubmissionCaseResult {
   label: string;
   passed: boolean;
@@ -120,34 +104,28 @@ export interface SubmissionRequest {
 }
 
 export type LocalEditorPreference = "VS_CODE" | "NVIM";
-export type AiProvider = "OLLAMA" | "CODEX_ADAPTER" | "ANTHROPIC";
-export type TranscriptionProvider = "BROWSER" | "MANUAL";
-export type SchedulerAlgorithm = "SM2";
-export type ReviewIntensity = "LIGHT" | "BALANCED" | "AGGRESSIVE";
-export type ReviewFrequency = "LESS_OFTEN" | "BALANCED" | "MORE_OFTEN";
-export type PracticeFocus = "CODE_HEAVY" | "BALANCED" | "EXPLANATION_HEAVY";
 
 export interface LocalWorkspaceSettings {
   workspaceDirectory: string;
   editor: LocalEditorPreference;
-  customEditorCommand: string;
-  aiProvider: AiProvider;
-  aiBaseUrl: string;
-  aiModel: string;
-  aiApiKey: string;
-  ollamaBaseUrl?: string;
-  ollamaModel?: string;
-  transcriptionProvider: TranscriptionProvider;
-  schedulerAlgorithm: SchedulerAlgorithm;
-  reviewIntensity: ReviewIntensity;
-  codeReviewFrequency: ReviewFrequency;
-  explanationReviewFrequency: ReviewFrequency;
-  practiceFocus: PracticeFocus;
-  minimumIntervalDays: number;
-  maximumCodingIntervalDays: number;
-  maximumExplanationIntervalDays: number;
-  problemBankSyncEnabled: boolean;
-  problemBankSyncFilePath: string;
+  editorPath: string;
+  javaRuntimePath: string;
+  javaCompilerPath: string;
+  pythonPath: string;
+  nodePath: string;
+  goPath: string;
+}
+
+export interface BackupRestoreResult {
+  restored: true;
+  restoredAt: string;
+  safetyBackupFile: string;
+  summary: {
+    problems: number;
+    submissions: number;
+    reviews: number;
+    activityEvents: number;
+  };
 }
 
 export interface ToolCommandStatus {
@@ -161,9 +139,49 @@ export interface LocalToolingStatus {
   javaRuntime: ToolCommandStatus;
   javaCompiler: ToolCommandStatus;
   maven: ToolCommandStatus;
+  python: ToolCommandStatus;
+  node: ToolCommandStatus;
+  go: ToolCommandStatus;
   workspaceConfigured: boolean;
   workspaceWritable: boolean;
   workspaceDirectory: string;
+}
+
+export interface ActivityDay {
+  date: string;
+  count: number;
+}
+
+export interface ActivitySummary {
+  startDate: string;
+  endDate: string;
+  totalActivity: number;
+  activeDays: number;
+  days: ActivityDay[];
+}
+
+export type TodayQueueReason = "OVERDUE" | "DUE_TODAY" | "NEW";
+
+export interface TodayQueueItem {
+  problemId: string;
+  title: string;
+  slug: string;
+  summary: string;
+  type: ProblemType;
+  difficulty: ProblemDifficulty;
+  track: ReviewTrack;
+  reason: TodayQueueReason;
+  dueAt: string;
+  priorityScore: number;
+  estimatedMinutes: number;
+}
+
+export interface TodayQueue {
+  date: string;
+  completedToday: number;
+  totalCandidates: number;
+  estimatedMinutes: number;
+  items: TodayQueueItem[];
 }
 
 export interface LocalProblemWorkspace {
@@ -195,7 +213,7 @@ export interface LocalProblemRunResult {
   title: string;
   slug: string;
   scaffoldPath: string;
-  status: "PASSED" | "FAILED" | "COMPILE_ERROR" | "RUNTIME_ERROR" | "TIMEOUT";
+  status: "PASSED" | "FAILED" | "COMPILE_ERROR" | "RUNTIME_ERROR" | "TIMEOUT" | "TOOLCHAIN_UNAVAILABLE";
   exitCode: number;
   runtimeMillis: number;
   stdout: string;
@@ -203,17 +221,114 @@ export interface LocalProblemRunResult {
   caseResults: LocalProblemCaseResult[];
 }
 
-export interface LocalAiStatus {
-  available: boolean;
-  provider: AiProvider;
-  baseUrl: string;
-  selectedModel: string;
-  models: string[];
+export type CodingSessionStage = "STARTED" | "EDITOR_OPEN" | "TESTED" | "GRADED" | "SCHEDULED";
+
+export type PracticeSessionStatus = "ACTIVE" | "COMPLETED" | "ABANDONED";
+
+export interface PracticeSession {
+  id: string;
+  problemId: string;
+  track: ReviewTrack;
+  status: PracticeSessionStatus;
+  startedAt: string;
+  lastHeartbeatAt: string;
+  endedAt: string | null;
+  activeTimeMillis: number;
+  updatedAt: string;
+}
+
+export interface TestAttemptHistory {
+  id: string;
+  problemId: string;
+  sessionId: string | null;
+  submittedLanguage: string;
+  status: string;
+  passedCases: number;
+  totalCases: number;
+  runtimeMillis: number;
+  createdAt: string;
+}
+
+export interface ReviewHistoryEntry {
+  id: string;
+  problemId: string;
+  sessionId: string | null;
+  track: ReviewTrack;
+  passed: boolean;
+  previousStatus: ReviewStatus | null;
+  previousDueAt: string | null;
+  newStatus: ReviewStatus;
+  newDueAt: string;
+  intervalDays: number;
+  createdAt: string;
+}
+
+export interface KnowledgeCheckHistoryEntry {
+  id: string;
+  problemId: string;
+  sessionId: string | null;
+  knowledgeSessionId: string;
+  status: KnowledgeEvaluationResult["status"];
+  score: number;
+  summary: string;
+  createdAt: string;
+}
+
+export interface ProblemProgressSummary {
+  attempts: number;
+  passedAttempts: number;
+  failedAttempts: number;
+  passedTestCases: number;
+  totalTestCases: number;
+  totalRuntimeMillis: number;
+  timeSpentMillis: number;
+  reviewGrades: number;
+  passedReviews: number;
+  failedReviews: number;
+  knowledgeChecks: number;
+  averageKnowledgeScore: number | null;
+  lastActivityAt: string | null;
+}
+
+export interface ProblemProgressHistory {
+  problemId: string;
+  summary: ProblemProgressSummary;
+  sessions: PracticeSession[];
+  testAttempts: TestAttemptHistory[];
+  reviews: ReviewHistoryEntry[];
+  knowledgeChecks: KnowledgeCheckHistoryEntry[];
+}
+
+export interface McpConfigResponse {
+  transport: "stdio";
+  configured: boolean;
+  command: string;
+  args: string[];
+  config: Record<string, unknown>;
+  configJson: string;
   message: string;
 }
 
+export interface McpStatus {
+  transport: "stdio";
+  available: boolean;
+  configured: boolean;
+  command: string;
+  args: string[];
+  serverScript: string;
+  message: string;
+}
+
+export interface ClaudeLaunchResult {
+  launched: boolean;
+  copied: boolean;
+  prompt: string;
+  message: string;
+  session: { id: string; problemId: string; status: "STARTED" | "SUBMITTED" };
+}
+
 export interface KnowledgeEvaluationResult {
-  status: "PASSED" | "NEEDS_REVIEW" | "FAILED" | "ERROR";
+  status: "PENDING" | "PASSED" | "NEEDS_REVIEW" | "FAILED" | "ERROR";
   score: number;
   summary: string;
   missingConcepts: string[];
@@ -221,59 +336,5 @@ export interface KnowledgeEvaluationResult {
   suggestedReview: string;
   model: string;
   createdAt: string;
-}
-
-export interface ProblemBankExport {
-  format: "juro.problem-bank";
-  version: 1;
-  exportedAt: string;
-  problems: Array<{
-    id: string;
-    slug: string;
-    title: string;
-    summary: string;
-    descriptionMarkdown: string;
-    constraintsMarkdown?: string | null;
-    type: ProblemType;
-    difficulty: ProblemDifficulty;
-    starterCode?: string | null;
-    referenceSolution?: string | null;
-    evaluationNotes?: string | null;
-    solutionVideoUrl?: string | null;
-    knowledgeRubric: string;
-    createdAt: string;
-    updatedAt: string;
-    examples: ProblemExample[];
-    testCases: ProblemTestCase[];
-    reviewStates: ReviewState[];
-    submissions: Array<{
-      submittedLanguage: string;
-      sourceCode: string;
-      status: SubmissionStatus;
-      resultSummary: string;
-      totalRuntimeMillis?: number | null;
-      resultDetailsJson?: string | null;
-      createdAt?: string | null;
-    }>;
-  }>;
-}
-
-export interface ProblemBankImportResult {
-  created: number;
-  updated: number;
-  reviewStatesImported: number;
-  submissionsImported: number;
-}
-
-export interface ProblemBankFileSyncStatus {
-  enabled: boolean;
-  filePath: string;
-  fileExists: boolean;
-  lastModifiedAt?: string | null;
-  fileSizeBytes?: number | null;
-  importInProgress: boolean;
-  lastImportedAt?: string | null;
-  lastImportSummary?: string | null;
-  lastError?: string | null;
-  synced: boolean;
+  sessionId?: string;
 }

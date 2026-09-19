@@ -1,0 +1,14 @@
+{
+  "name": "juro-local-web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "install:all": "npm --prefix frontend install && npm --prefix server install",
+    "dev": "node scripts/dev-web.mjs",
+    "build": "npm --prefix frontend run build && npm --prefix server run build",
+    "start": "./scripts/start-web.sh",
+    "juro": "./scripts/juro.sh",
+    "init:db": "./scripts/init-db.sh",
+    "mcp": "./scripts/start-mcp.sh"
+  }
+}

@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { createPortal } from "react-dom";
-import { CheckCircle2, ChevronDown, ExternalLink, Mic, Play, RefreshCw, Terminal, X, XCircle } from "lucide-react";
+import { ArrowRight, CheckCircle2, ChevronDown, ExternalLink, Mic, Play, RefreshCw, Terminal, X, XCircle } from "lucide-react";
 import type {
+  CodingSessionStage,
   KnowledgeEvaluationResult,
   LocalProblemCaseResult,
   LocalProblemRunResult,
@@ -15,10 +16,12 @@ type LocalWorkspacePanelProps = {
   lastRunResult: LocalProblemRunResult | null;
   lastKnowledgeResult: KnowledgeEvaluationResult | null;
   onClear: () => void;
+  onFinishSession: () => void;
   onKnowledgeCheck: () => void;
   onOpenEditor: () => void;
   onGradeCoding: (passed: boolean) => Promise<ReviewState>;
   onRunTests: () => void;
+  codingReview: ReviewState | null;
 };
 
 export function LocalWorkspacePanel({
@@ -27,10 +30,12 @@ export function LocalWorkspacePanel({
   lastKnowledgeResult,
   lastRunResult,
   onClear,
+  onFinishSession,
   onGradeCoding,
   onKnowledgeCheck,
   onOpenEditor,
   onRunTests,
+  codingReview,
 }: LocalWorkspacePanelProps) {
   const [expandedCases, setExpandedCases] = useState<Set<number>>(() => new Set());
   const [isGradingCoding, setIsGradingCoding] = useState(false);
@@ -56,6 +61,22 @@ export function LocalWorkspacePanel({
   const status = result?.status ?? activeWorkspace.status ?? "Not run yet";
   const testsPassed = result?.status === "PASSED" && result.caseResults.length > 0 && result.caseResults.every((item) => item.passed);
   const workspaceMessage = activeWorkspace.message?.trim();
+  const sessionStage: CodingSessionStage = codingReview
+    ? "SCHEDULED"
+    : result
+      ? "TESTED"
+      : activeWorkspace.opened || activeWorkspace.status === "OPEN"
+        ? "EDITOR_OPEN"
+        : "STARTED";
+  const sessionStepIndex = sessionStage === "SCHEDULED" ? 4 : sessionStage === "TESTED" ? 3 : sessionStage === "EDITOR_OPEN" ? 2 : 1;
+  const sessionSteps: Array<{ label: string; stage: CodingSessionStage }> = [
+    { label: "Start", stage: "STARTED" },
+    { label: "Open editor", stage: "EDITOR_OPEN" },
+    { label: "Run tests", stage: "TESTED" },
+    { label: "Grade yourself", stage: "GRADED" },
+    { label: "Next review", stage: "SCHEDULED" },
+  ];
+  const canRunTests = Boolean(result) || activeWorkspace.opened || activeWorkspace.status === "OPEN";
 
   if (typeof document === "undefined") {
     return null;
@@ -108,23 +129,48 @@ export function LocalWorkspacePanel({
                 Explain {lastKnowledgeResult.score}
               </span>
             ) : null}
-            <button className="button button--ghost button--sm" disabled={isBusy} onClick={onOpenEditor} type="button">
+            <button className="button button--ghost button--sm" disabled={isBusy || Boolean(codingReview)} onClick={onOpenEditor} type="button">
               <ExternalLink size={14} strokeWidth={2.25} />
-              Open Editor
+              {sessionStage === "STARTED" ? "2. Open editor" : "Reopen editor"}
             </button>
             <button className="button button--ghost button--sm" disabled={isBusy} onClick={onKnowledgeCheck} type="button">
               <Mic size={14} strokeWidth={2.25} />
               Explain
             </button>
-            <button className="button button--primary button--sm" disabled={isBusy} onClick={onRunTests} type="button">
+            <button className="button button--primary button--sm" disabled={isBusy || !canRunTests || Boolean(codingReview)} onClick={onRunTests} type="button">
               {isBusy ? <RefreshCw size={14} strokeWidth={2.25} /> : <Play size={14} strokeWidth={2.25} />}
-              Run Tests
+              {result ? "Run tests again" : "3. Run tests"}
             </button>
+            {codingReview ? (
+              <button className="button button--primary button--sm" disabled={isBusy} onClick={onFinishSession} type="button">
+                <CheckCircle2 size={14} strokeWidth={2.25} />
+                Finish session
+              </button>
+            ) : null}
             <button aria-label="Close current problem" className="icon-button" onClick={onClear} type="button">
               <X size={15} strokeWidth={2.25} />
             </button>
           </div>
         </div>
+
+        <ol className="coding-session-steps" aria-label="Coding session progress">
+          {sessionSteps.map((step, index) => (
+            <li
+              className={`coding-session-step${index < sessionStepIndex ? " coding-session-step--complete" : ""}${
+                index === sessionStepIndex ? " coding-session-step--active" : ""
+              }`}
+              key={step.stage}
+            >
+              <span className="coding-session-step__marker">{index < sessionStepIndex ? "✓" : index + 1}</span>
+              <span>{step.label}</span>
+              {index < sessionSteps.length - 1 ? <ArrowRight className="coding-session-step__arrow" size={13} aria-hidden="true" /> : null}
+            </li>
+          ))}
+        </ol>
+
+        {!result && sessionStage === "STARTED" ? (
+          <p className="local-workspace-panel__hint">Open the editor first. The test and self-grading steps unlock after that.</p>
+        ) : null}
 
         {activeWorkspace.status === "ERROR" && workspaceMessage ? (
           <p className="local-workspace-panel__message local-workspace-panel__message--error">{workspaceMessage}</p>
@@ -138,37 +184,53 @@ export function LocalWorkspacePanel({
 
         {result ? (
           <div className="local-result-panel">
-            <section className="review-grade-panel" aria-label="Grade coding review">
-              <div>
-                <strong>Use the test output to grade coding</strong>
-                <span>
-                  {testsPassed
-                    ? "All local test cases passed. Mark this coding review passed if the solution is yours and you understand it."
-                    : "The run did not pass cleanly. Mark needs review unless you intentionally stopped early."}
-                </span>
-              </div>
-              <div className="review-grade-panel__actions">
-                <button
-                  className="button button--ghost button--sm review-grade-button review-grade-button--fail"
-                  disabled={isBusy || isGradingCoding}
-                  onClick={() => void gradeCoding(false)}
-                  type="button"
-                >
-                  <XCircle size={14} />
-                  Needs review
-                </button>
-                <button
-                  className="button button--primary button--sm review-grade-button review-grade-button--pass"
-                  disabled={isBusy || isGradingCoding}
-                  onClick={() => void gradeCoding(true)}
-                  type="button"
-                >
+            {codingReview ? (
+              <section className="review-scheduled-panel" aria-label="Next review scheduled">
+                <div>
+                  <strong>Next review scheduled</strong>
+                  <span>
+                    {codingGradeMessage ?? `Coding will be reviewed again in ${codingReview.intervalDays} day${codingReview.intervalDays === 1 ? "" : "s"}.`}
+                  </span>
+                  <small>Due {formatReviewDate(codingReview.dueAt)}</small>
+                </div>
+                <button className="button button--primary button--sm" disabled={isBusy} onClick={onFinishSession} type="button">
                   <CheckCircle2 size={14} />
-                  Passed
+                  Finish session
                 </button>
-              </div>
-              {codingGradeMessage ? <p className="review-grade-panel__message">{codingGradeMessage}</p> : null}
-            </section>
+              </section>
+            ) : (
+              <section className="review-grade-panel" aria-label="Grade coding review">
+                <div>
+                  <strong>4. Grade yourself</strong>
+                  <span>
+                    {testsPassed
+                      ? "All local test cases passed. Mark this review passed only if the solution is yours and you understand it."
+                      : "The run did not pass cleanly. Mark needs review unless you intentionally stopped early."}
+                  </span>
+                </div>
+                <div className="review-grade-panel__actions">
+                  <button
+                    className="button button--ghost button--sm review-grade-button review-grade-button--fail"
+                    disabled={isBusy || isGradingCoding}
+                    onClick={() => void gradeCoding(false)}
+                    type="button"
+                  >
+                    <XCircle size={14} />
+                    Needs review
+                  </button>
+                  <button
+                    className="button button--primary button--sm review-grade-button review-grade-button--pass"
+                    disabled={isBusy || isGradingCoding}
+                    onClick={() => void gradeCoding(true)}
+                    type="button"
+                  >
+                    <CheckCircle2 size={14} />
+                    Passed
+                  </button>
+                </div>
+                {codingGradeMessage ? <p className="review-grade-panel__message">{codingGradeMessage}</p> : null}
+              </section>
+            )}
             {result.caseResults.length > 0 ? (
               <div className="result-cases">
                 {result.caseResults.map((caseResult, index) => {
@@ -232,4 +294,12 @@ function ResultBlock({ label, value }: { label: string; value: string }) {
       <code className="case-inline-output">{value}</code>
     </section>
   );
+}
+
+function formatReviewDate(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "not available";
+  }
+  return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(date);
 }
